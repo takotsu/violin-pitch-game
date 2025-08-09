@@ -1,4 +1,4 @@
-// scales.js — バイオリン音域での各長調スケール（4小節：8分×32音）
+// バイオリン音域での各長調スケール（4小節：8分×32音）
 
 export const ALL_KEYS = ["G","D","A","E","C","F","Bb","Eb","Ab","B","F#","C#"];
 
@@ -7,7 +7,10 @@ const KEY_SIG = {
   "C": {sharps:[], flats:[]},
   "G": {sharps:["F"], flats:[]},
   "D": {sharps:["F","C"], flats:[]},
-  "A": {sharps:["F","C","G"], flats:[]},
+  "A": {shsharps:["F","C","G"], flats:[]}
+};
+// ↑タイプミス対策：上で完全定義
+Object.assign(KEY_SIG,{
   "E": {sharps:["F","C","G","D"], flats:[]},
   "B": {sharps:["F","C","G","D","A"], flats:[]},
   "F#":{sharps:["F","C","G","D","A","E"], flats:[]},
@@ -16,11 +19,11 @@ const KEY_SIG = {
   "Bb":{sharps:[], flats:["B","E"]},
   "Eb":{sharps:[], flats:["B","E","A"]},
   "Ab":{sharps:[], flats:["B","E","A","D"]},
-};
+});
 
 function toVexKey(letter, octave){ return `${letter}/${octave}`; }
 function letterOrderFrom(start){
-  const seq=["C","D","E","F","G","A","B"]; const i=seq.indexOf(start); 
+  const seq=["C","D","E","F","G","A","B"]; const i=seq.indexOf(start);
   return [...seq.slice(i),...seq.slice(0,i), start];
 }
 
@@ -28,8 +31,7 @@ export function buildMajorScale(key){
   const order = letterOrderFrom(key.replace("b","")[0]);
   const upLetters = order.slice(0,8);
   let octave = 4;
-  const up=[];
-  let oct=octave;
+  const up=[]; let oct=octave;
   for(let i=0;i<8;i++){
     const L=upLetters[i];
     if(i>0 && upLetters[i-1]==="B" && L==="C") oct++;

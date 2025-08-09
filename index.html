@@ -5,18 +5,18 @@
   <title>Violin Pitch Game (A=442Hz)</title>
   <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover" />
   <link rel="stylesheet" href="./style.css" />
-  <!-- ※ VexFlow は app.js 内でフォールバック付き動的ロードします -->
+  <!-- VexFlowはapp.jsでフォールバック付き動的ロード。ここでは読みません -->
 </head>
 <body>
   <header>
     <h1>Violin Pitch Game (A=442Hz)</h1>
-    <span id="app-version" class="version">v8</span>
+    <span id="app-version" class="version">v9</span>
   </header>
 
   <section id="controls">
     <div class="row">
       <label>スケールの調:
-        <!-- 静的オプションを必ず置く（“オプションなし”回避）。JSでも検証・補強する -->
+        <!-- “オプションなし”回避のため静的にも用意 -->
         <select id="key-select">
           <option>G</option><option>D</option><option>A</option><option>E</option>
           <option>C</option><option>F</option><option>Bb</option><option>Eb</option>
@@ -39,7 +39,7 @@
           <span>メトロノーム</span>
         </label>
         <span id="metro-led" aria-hidden="true"></span>
-        <button id="tunerBtn" class="tuner" title="既製チューナーモードのON/OFF">チューナー</button>
+        <button id="tunerBtn" class="tuner" title="既製チューナーのON/OFF">チューナー</button>
       </div>
     </div>
 
@@ -52,6 +52,7 @@
   </section>
 
   <main>
+    <!-- 五線譜（VexFlow or フォールバックSVG） -->
     <section id="score-area">
       <div id="staff-wrap">
         <div id="staff"></div>
@@ -59,11 +60,13 @@
       </div>
     </section>
 
+    <!-- スコア／フィードバック -->
     <section id="score-panel">
       <div id="big-score">--</div>
       <div id="feedback">待機中…</div>
     </section>
 
+    <!-- ±50c バー -->
     <section id="cents-area">
       <div id="cents-scale">
         <span>-50c</span><span>-25c</span><span>0c</span><span>+25c</span><span>+50c</span>
@@ -71,6 +74,7 @@
       <div id="cents-bar"><div id="needle"></div></div>
     </section>
 
+    <!-- 常時ライブ波形（左→右スイープ、プレイヘッド付き） -->
     <section id="osc-area">
       <canvas id="osc"></canvas>
     </section>
@@ -91,7 +95,7 @@
     </div>
   </div>
 
-  <!-- エラー一覧ポップアップ -->
+  <!-- エラー一覧ポップアップ（コピー可） -->
   <div id="error-modal" aria-hidden="true">
     <div class="card">
       <h2>エラー情報</h2>
@@ -105,7 +109,7 @@
 
   <div id="toast" aria-live="polite" aria-atomic="true"></div>
 
-  <!-- アプリ（VexFlowは app.js 内でロード） -->
+  <!-- アプリ -->
   <script type="module" src="./scales.js"></script>
   <script type="module" src="./score.js"></script>
   <script type="module" src="./app.js"></script>
