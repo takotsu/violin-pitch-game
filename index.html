@@ -2,102 +2,81 @@
 <html lang="ja">
 <head>
   <meta charset="utf-8" />
-  <title>Violin Pitch Game</title>
-  <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover" />
-  <link rel="stylesheet" href="./style.css" />
+  <title>Violin Scale Trainer</title>
+  <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+  <link rel="stylesheet" href="./style.css">
 </head>
 <body>
-  <div id="topbar">
-    <div id="mini-score" aria-live="polite">—</div>
-    <span id="app-version" class="version">v16</span>
-  </div>
-
-  <section id="controls">
+  <header id="topbar">
     <div class="row">
-      <label>スケールの調:
-        <select id="key-select">
+      <div class="left">
+        <label>スケールの調:</label>
+        <select id="key-select" class="sf">
           <option>G</option><option>D</option><option>A</option><option>E</option>
           <option>C</option><option>F</option><option>Bb</option><option>Eb</option>
           <option>Ab</option><option>B</option><option>F#</option><option>C#</option>
         </select>
-      </label>
-
-      <label>合格閾値（点）:
-        <select id="pass"></select>
-      </label>
-
-      <div id="metro">
-        <label>BPM:
-          <input id="bpm" type="number" min="40" max="200" step="5" value="80" />
-        </label>
-        <label class="switch">
-          <input id="metroToggle" type="checkbox" />
-          <span>メトロノーム</span>
-        </label>
-        <span id="metro-led" aria-hidden="true"></span>
       </div>
-    </div>
-
-    <div class="row">
-      <label>音量閾値（RMS）:
-        <input id="rms" type="number" min="0.001" max="0.02" step="0.001" value="0.002" />
-      </label>
-      <div class="buttons">
-        <button id="start">開始</button>
+      <div class="mid">
+        <label>合格閾値（点）:</label>
+        <select id="pass" class="sf"></select>
+      </div>
+      <div class="mid">
+        <label>音量閾値（RMS）:</label>
+        <input id="rms" type="number" min="0.001" max="0.02" step="0.001" value="0.002" class="sf"/>
+      </div>
+      <div class="right">
+        <button id="start" class="primary">開始</button>
         <button id="stop" disabled>停止</button>
       </div>
+      <span id="app-version" class="version">v24</span>
+      <span id="micdb" class="micdb" aria-live="off">— dB</span>
     </div>
-  </section>
+  </header>
 
-  <main>
+  <main id="main">
     <section id="score-area">
       <div id="advice" aria-live="polite">待機中…</div>
-      <div id="big-score" aria-live="polite">—</div>
-      <div id="staff-wrap"><div id="staff"></div></div>
-    </section>
+      <div id="big-score" aria-live="polite">0</div>
 
-    <section id="score-panel">
-      <div id="cents-area">
-        <div id="cents-scale">
-          <span>-50c</span><span>-25c</span><span>0c</span><span>+25c</span><span>+50c</span>
-        </div>
-        <div id="cents-bar"><div id="needle"></div></div>
+      <div id="staff-wrap">
+        <canvas id="fx"></canvas>
+        <div id="staff"></div>
       </div>
-      <div id="prog" aria-live="polite">音 1/32</div>
+
+      <div id="prog" class="sf" aria-live="polite">音 1/48</div>
+      <div id="cents">
+        <div class="labels"><span>-50c</span><span>-25c</span><span>0c</span><span>+25c</span><span>+50c</span></div>
+        <div id="bar"><div id="needle"></div></div>
+      </div>
     </section>
   </main>
 
-  <!-- 結果 -->
   <div id="result" aria-hidden="true">
-    <canvas id="confetti"></canvas>
     <div class="card">
-      <div class="label">完了</div>
-      <div id="praise">Good!</div>
+      <h2 class="sf">完了</h2>
+      <div id="praise">Great!</div>
       <div id="details"></div>
       <div class="buttons">
-        <button id="again">もう一度</button>
+        <button id="again" class="primary">もう一度</button>
         <button id="close">閉じる</button>
       </div>
     </div>
   </div>
 
-  <!-- エラー一覧 -->
   <div id="error-modal" aria-hidden="true">
     <div class="card">
       <h2>エラー情報</h2>
       <ol id="error-list"></ol>
       <div class="buttons">
-        <button id="err-copy">内容をコピー</button>
+        <button id="err-copy" class="primary">内容をコピー</button>
         <button id="err-close">閉じる</button>
       </div>
     </div>
   </div>
 
-  <div id="toast" aria-live="polite" aria-atomic="true"></div>
-
-  <!-- スリープ防止（iOSフォールバック） -->
   <video id="nosleep" muted playsinline loop style="position:absolute;width:1px;height:1px;opacity:0;pointer-events:none">
-    <source src="data:video/mp4;base64,AAAAHGZ0eXBpc28yAAAAAGlzbzJpc28yYXZjMQAA" type="video/mp4" />
+    <source src="data:video/mp4;base64,AAAAHGZ0eXBpc28yAAAAAGlzbzJpc28yYXZjMQAA" type="video/mp4">
   </video>
 
   <script type="module" src="./scales.js"></script>
