@@ -1,29 +1,26 @@
 import { ALL_KEYS, buildMajorScale, letterFreq } from "./scales.js";
 import { renderScale, highlightIndex } from "./score.js";
 
-/* ===== 設定 ===== */
 const A4_REF_HZ = 442;
 const STUCK_SEC_BEFORE_AUTONEXT = 3;
 const COOLDOWN_NEXT_MS = 220;
 const PASS_BAND_CENTS = 15;
 
-/* ===== エラーログ ===== */
-const errorLog = [];
+const errorLog=[];
 function pushError(e){
-  const msg = (e?.message||e)?.toString();
-  const stack = e?.error?.stack || e?.stack || "";
-  const entry = `${new Date().toLocaleString()} : ${msg}\n${stack}`;
+  const msg=(e?.message||e)?.toString();
+  const stack=e?.error?.stack||e?.stack||"";
+  const entry=`${new Date().toLocaleString()} : ${msg}\n${stack}`;
   errorLog.push(entry); renderErrorModal();
 }
-window.addEventListener('error',(ev)=>{ pushError(ev); notify('エラーが発生（詳細を見るをタップ）','error',3500); showErrorModal(); });
-window.addEventListener('unhandledrejection',(ev)=>{ pushError(ev.reason||ev); notify('エラーが発生（詳細を見るをタップ）','error',3500); showErrorModal(); });
+window.addEventListener('error',(ev)=>{ pushError(ev); notify('エラーが発生（詳細を見るをタップ）','error',3500); });
+window.addEventListener('unhandledrejection',(ev)=>{ pushError(ev.reason||ev); notify('エラーが発生（詳細を見るをタップ）','error',3500); });
 function renderErrorModal(){ const list=document.getElementById('error-list'); if(!list) return; list.innerHTML=""; errorLog.slice(-80).forEach(t=>{ const li=document.createElement('li'); li.textContent=t; list.appendChild(li); }); }
 function showErrorModal(){ const m=document.getElementById('error-modal'); m.classList.add('show'); m.setAttribute('aria-hidden','false'); }
 function hideErrorModal(){ const m=document.getElementById('error-modal'); m.classList.remove('show'); m.setAttribute('aria-hidden','true'); }
 document.getElementById('err-close').onclick=hideErrorModal;
 document.getElementById('err-copy').onclick=async()=>{ await navigator.clipboard.writeText(errorLog.join('\n\n')); notify('エラー内容をコピーしました。','info',2000); };
 
-/* ===== 通知 ===== */
 let toastTimer;
 function notify(msg, level='warn', ms=2500, tiny=false){
   const el=document.getElementById('toast');
@@ -31,14 +28,14 @@ function notify(msg, level='warn', ms=2500, tiny=false){
   clearTimeout(toastTimer); toastTimer=setTimeout(()=>el.className=el.className.replace('show',''), ms);
 }
 
-/* ===== Wake Lock ===== */
-let wakeLock = null;
-const nosleepVideo = document.getElementById('nosleep');
+/* WakeLock */
+let wakeLock=null;
+const nosleepVideo=document.getElementById('nosleep');
 async function keepAwakeEnable(){
   try{
     if('wakeLock' in navigator){
       wakeLock = await navigator.wakeLock.request('screen');
-      wakeLock.addEventListener('release', ()=>{});
+      wakeLock.addEventListener('release',()=>{});
     }else{
       if(nosleepVideo && nosleepVideo.paused){ await nosleepVideo.play().catch(()=>{}); }
     }
@@ -49,15 +46,15 @@ async function keepAwakeDisable(){
   try{ if(nosleepVideo && !nosleepVideo.paused){ nosleepVideo.pause(); } }catch{}
 }
 
-/* ===== VexFlow ===== */
+/* VexFlow（失敗時はフォールバック描画） */
 async function ensureVexFlow(){
   if(window.Vex?.Flow) return true;
-  const cdns = [
+  const cdns=[
     "https://cdn.jsdelivr.net/npm/vexflow@3.0.9/build/vexflow-min.js",
     "https://unpkg.com/vexflow@3.0.9/build/vexflow-min.js"
   ];
   for(const url of cdns){
-    try{ await loadScript(url, 7000); if(window.Vex?.Flow) return true; }
+    try{ await loadScript(url,7000); if(window.Vex?.Flow) return true; }
     catch(e){ pushError(new Error(`VexFlow load fail: ${url}`)); }
   }
   pushError(new Error("VexFlowをCDNから読み込めませんでした。フォールバック描画に切り替えます。"));
@@ -73,7 +70,7 @@ function loadScript(src, timeoutMs=7000){
   });
 }
 
-/* ===== UI ===== */
+/* UI */
 const adviceEl=document.getElementById('advice');
 const bigScoreEl=document.getElementById('big-score');
 const miniScoreEl=document.getElementById('mini-score');
@@ -82,17 +79,18 @@ const passSel=document.getElementById('pass');
 const btnStart=document.getElementById('start');
 const btnStop=document.getElementById('stop');
 const bpmInput=document.getElementById('bpm');
+const tapBeepBtn=document.getElementById('tap-beep');
 const metroLed=document.getElementById('metro-led');
 const metroToggle=document.getElementById('metroToggle');
 const keySelect=document.getElementById('key-select');
 const rmsInput=document.getElementById('rms');
 const progEl=document.getElementById('prog');
 
-/* ===== 状態 ===== */
+/* 状態 */
 let renderCtx=null, scaleData=null;
 let currentKey="G";
 let passThreshold=90;
-let LEVEL_RMS_THRESHOLD = 0.002;
+let LEVEL_RMS_THRESHOLD=0.002;
 let sessionRunning=false;
 let idx=0;
 let lastProgressTime=0;
@@ -100,31 +98,29 @@ let lastValidTime=0;
 let lastAdvanceTime=0;
 let mustExitPassBand=false;
 let scores=[];
+let finishing=false;
 
-/* ===== 表示 ===== */
+/* 表示 */
 function colorMini(diffAbs){
   miniScoreEl.className="";
   if(diffAbs<=5) miniScoreEl.classList.add('green'), miniScoreEl.textContent="◎";
   else if(diffAbs<=15) miniScoreEl.classList.add('yellow'), miniScoreEl.textContent="◯";
   else miniScoreEl.classList.add('red'), miniScoreEl.textContent="△";
 }
-function updateNeedle(c){ const clamped=Math.max(-50,Math.min(50,c)); const pct=(clamped+50)/100; needleEl.style.left=`calc(${pct*100}% - 1px)`; }
-let lastAdviceTs = 0;
-function setAdviceThrottled(cents, score){
-  const now = performance.now();
-  if(now - lastAdviceTs < 140) return; // 更新頻度を下げる
-  lastAdviceTs = now;
-  const abs=Math.abs(cents);
-  const arrow = cents>0 ? "↑" : (cents<0 ? "↓" : "＝");
-  const text = `${(abs|0)}c ${arrow}`;
+function updateNeedle(c){ const cc=Math.max(-50,Math.min(50,c)); const pct=(cc+50)/100; needleEl.style.left=`calc(${pct*100}% - 1px)`; }
+let lastAdviceTs=0;
+function setAdviceThrottled(cents, score, mode="normal"){
+  const now=performance.now(); if(now-lastAdviceTs<140) return; lastAdviceTs=now;
+  if(mode==="encourage"){ adviceEl.className="bad"; adviceEl.textContent="頑張ろう！"; bigScoreEl.textContent="—"; return; }
+  const abs=Math.abs(cents); const arrow = cents>0?"↑":(cents<0?"↓":"＝"); const text=`${(abs|0)}c ${arrow}`;
   adviceEl.className="";
-  if(abs<=5){ adviceEl.classList.add('good'); adviceEl.textContent = text+"（そのまま）"; }
-  else if(abs<=20){ adviceEl.classList.add('warn'); adviceEl.textContent = text+"（微調整）"; }
-  else { adviceEl.classList.add('bad'); adviceEl.textContent = text+"（思い切って修正）"; }
+  if(abs<=5){ adviceEl.classList.add('good'); adviceEl.textContent=text+"（そのまま）"; }
+  else if(abs<=20){ adviceEl.classList.add('warn'); adviceEl.textContent=text+"（微調整）"; }
+  else { adviceEl.classList.add('bad'); adviceEl.textContent=text+"（思い切って修正）"; }
   bigScoreEl.textContent = `${score}`;
 }
 
-/* ===== メトロノーム ===== */
+/* メトロノーム */
 let metroTimer=null, metroOn=false, beat=0;
 let strongPool=[], weakPool=[], poolIdxS=0, poolIdxW=0;
 function makeBeepUrl(freq=2400, durMs=120, sr=44100){
@@ -154,26 +150,25 @@ function startMetronome(){
     if((beat%4===0) && sessionRunning){
       const now=performance.now();
       if(now - lastProgressTime > STUCK_SEC_BEFORE_AUTONEXT*1000 && now - lastValidTime < 1200){
-        idx = Math.min(idx+1, scaleData.noteObjs.length);
-        if(idx >= scaleData.noteObjs.length){ finishScale(); }
-        else { highlightIndex(renderCtx, idx); progEl.textContent=`音 ${idx+1}/${scaleData.noteObjs.length}`; lastProgressTime=now; mustExitPassBand=true; }
+        if(idx < (scaleData?.noteObjs?.length||0)) idx++;
+        if(idx >= (scaleData?.noteObjs?.length||0)){ finishScale(); }
+        else { highlightIndex(renderCtx,idx); progEl.textContent=`音 ${idx+1}/${scaleData.noteObjs.length}`; lastProgressTime=now; mustExitPassBand=true; }
       }
     }
     beat++;
   }, beatMs);
 }
 function stopMetronome(){ if(metroTimer) clearInterval(metroTimer); metroTimer=null; }
+document.getElementById('tap-beep').addEventListener('click', ()=>playBeep(true));
 
-/* ===== Audio ===== */
+/* Audio */
 let ac, workletNode, mic, analyser, mediaStream=null, audioReady=false;
 async function startAudioGraph(){
   if(audioReady) return;
   try{
     ac=new (window.AudioContext||window.webkitAudioContext)({latencyHint:"interactive"});
     await ac.audioWorklet.addModule('./pitch-worklet.js');
-    mediaStream = await navigator.mediaDevices.getUserMedia({
-      audio:{ echoCancellation:false, noiseSuppression:false, autoGainControl:false, channelCount:1 }
-    });
+    mediaStream = await navigator.mediaDevices.getUserMedia({ audio:{ echoCancellation:false, noiseSuppression:false, autoGainControl:false, channelCount:1 } });
     mic=ac.createMediaStreamSource(mediaStream);
     analyser=ac.createAnalyser(); analyser.fftSize=2048;
     workletNode=new AudioWorkletNode(ac,'pitch-detector',{numberOfInputs:1,numberOfOutputs:0});
@@ -194,7 +189,7 @@ async function stopAudioGraph(){
 }
 async function resumeAudio(){ try{ if(ac && ac.state!=='running'){ await ac.resume(); } }catch(e){ pushError(e); }}
 
-/* 可視・不可視 */
+/* visibility */
 document.addEventListener('visibilitychange', async()=>{
   if(!document.hidden){
     await keepAwakeEnable();
@@ -207,7 +202,7 @@ document.addEventListener('visibilitychange', async()=>{
   }
 });
 
-/* ===== ピッチ処理 ===== */
+/* ピッチ処理 */
 function centsDiff(f_est,f_tgt){ return 1200*Math.log2(f_est/f_tgt); }
 function scoreFromCents(absC){ const c=Math.min(200,Math.max(0,absC)); return Math.round(100*(1-c/200)); }
 
@@ -215,29 +210,31 @@ function onWorkletMessage(ev){
   const {f0, conf, rms, now} = ev.data || {};
   const tNow = now || performance.now();
 
-  // 常時ニードル
-  if(scaleData){
-    const n=scaleData.noteObjs[Math.min(idx, scaleData.noteObjs.length-1)];
+  if(scaleData && idx < scaleData.noteObjs.length){
+    const n=scaleData.noteObjs[idx];
     const fTarget=letterFreq(n.letter,n.octave,scaleData.keySignature,A4_REF_HZ);
     if(f0){ updateNeedle(centsDiff(f0,fTarget)); }
   }
+  if(!sessionRunning || !scaleData) return;
 
-  if(!sessionRunning) return;
-
-  if(rms < LEVEL_RMS_THRESHOLD){ adviceEl.className="bad"; adviceEl.textContent='入力が小さいです。'; return; }
-  if(!f0 || conf<0.30){ adviceEl.className="warn"; adviceEl.textContent='検出が不安定…'; return; } // conf閾値を下げてF#取りこぼしを回避
+  if(rms < LEVEL_RMS_THRESHOLD){ setAdviceThrottled(0,0,"encourage"); return; }
+  if(!f0 || conf<0.30){ adviceEl.className="warn"; adviceEl.textContent='検出が不安定…'; return; }
 
   lastValidTime = tNow;
 
+  if(idx >= scaleData.noteObjs.length){ if(!finishing) finishScale(); return; }
   const cur=scaleData.noteObjs[idx];
   const fTarget=letterFreq(cur.letter,cur.octave,scaleData.keySignature,A4_REF_HZ);
   const cents=centsDiff(f0,fTarget);
   const absC=Math.abs(cents);
-  const sc=scoreFromCents(absC);
 
+  // ★ ±50c超は採点しない
+  if(absC > 50){ setAdviceThrottled(0,0,"encourage"); colorMini(absC); highlightIndex(renderCtx, idx); return; }
+
+  const sc=scoreFromCents(absC);
   setAdviceThrottled(cents, sc);
   colorMini(absC);
-  progEl.textContent=`音 ${idx+1}/${scaleData.noteObjs.length}`;
+  progEl.textContent=`音 ${Math.min(idx+1, scaleData.noteObjs.length)}/${scaleData.noteObjs.length}`;
 
   if(absC > PASS_BAND_CENTS) mustExitPassBand=false;
   const inPassBand = absC <= PASS_BAND_CENTS;
@@ -247,19 +244,19 @@ function onWorkletMessage(ev){
     if(scores[idx] == null) scores[idx] = sc;
 
     idx++;
-    lastProgressTime = tNow;
-    lastAdvanceTime = tNow;
-    mustExitPassBand = true;
+    lastProgressTime=tNow;
+    lastAdvanceTime=tNow;
+    mustExitPassBand=true;
 
     if(idx >= scaleData.noteObjs.length){ finishScale(); return; }
     highlightIndex(renderCtx, idx);
   }
 }
 
-/* ===== セッション ===== */
+/* セッション */
 function startSession(){
-  if(!audioReady){ notify('マイク初期化中です。画面をタップして有効化してください。','info',2500); resumeAudio(); return; }
-  sessionRunning=true; document.body.classList.add('running');
+  if(!audioReady){ resumeAudio(); }
+  sessionRunning=true; finishing=false; document.body.classList.add('running');
   btnStart.disabled=true; btnStop.disabled=false;
   passThreshold=+passSel.value;
   LEVEL_RMS_THRESHOLD = +rmsInput.value;
@@ -273,19 +270,19 @@ function startSession(){
   }catch(e){ pushError(e); notify('五線譜の描画に失敗（エラー情報を確認）','error',4000); }
 }
 function stopSession(){
-  sessionRunning=false; document.body.classList.remove('running');
+  sessionRunning=false; finishing=false; document.body.classList.remove('running');
   btnStart.disabled=false; btnStop.disabled=true;
   stopMetronome();
   miniScoreEl.textContent="—"; miniScoreEl.className="";
   adviceEl.className=""; adviceEl.textContent="停止中";
   bigScoreEl.textContent="—";
-  progEl.textContent=`音 1/32`;
+  progEl.textContent=`音 1/${scaleData?.noteObjs?.length||48}`;
 }
 function finishScale(){
+  if(finishing) return; finishing=true;
   stopMetronome();
   const passedScores = scores.filter(s=>typeof s==='number');
   const avg = passedScores.length ? Math.round(passedScores.reduce((a,b)=>a+b,0)/passedScores.length) : 0;
-
   const resultEl=document.getElementById('result');
   const praiseEl=document.getElementById('praise');
   const detailsEl=document.getElementById('details');
@@ -302,7 +299,7 @@ function finishScale(){
   stopSession();
 }
 
-/* ===== UI ===== */
+/* UI 初期化 */
 (function fillPass(){
   const sel=passSel; sel.innerHTML="";
   for(let p=85;p<=100;p++){ const op=document.createElement('option'); op.textContent=String(p); sel.appendChild(op); }
@@ -314,18 +311,19 @@ rmsInput.addEventListener('change', ()=>{ const v=Math.max(0.001,Math.min(0.02, 
 
 keySelect.addEventListener('change', ()=>{
   currentKey=keySelect.value;
-  if(!sessionRunning){
-    try{
-      scaleData=buildMajorScale(currentKey);
-      renderCtx=renderScale(scaleData.keySignature, scaleData.vexKeys, scaleData.noteObjs);
-      highlightIndex(renderCtx,0);
-    }catch(e){ pushError(e); }
-  }
+  if(sessionRunning) stopSession();
+  try{
+    scaleData=buildMajorScale(currentKey);
+    renderCtx=renderScale(scaleData.keySignature, scaleData.vexKeys, scaleData.noteObjs);
+    highlightIndex(renderCtx,0);
+    progEl.textContent=`音 1/${scaleData.noteObjs.length}`;
+  }catch(e){ pushError(e); }
 });
+
 btnStart.addEventListener('click', ()=>{ resumeAudio(); startSession(); });
 btnStop.addEventListener('click', stopSession);
 
-/* ===== 初期化 ===== */
+/* 起動 */
 (async function init(){
   keepAwakeEnable();
   try{ await ensureVexFlow(); }catch{}
@@ -333,6 +331,7 @@ btnStop.addEventListener('click', stopSession);
     currentKey="G"; scaleData=buildMajorScale(currentKey);
     renderCtx=renderScale(scaleData.keySignature, scaleData.vexKeys, scaleData.noteObjs);
     highlightIndex(renderCtx,0);
+    progEl.textContent=`音 1/${scaleData.noteObjs.length}`;
   }catch(e){ pushError(e); }
   if(!document.hidden){ await startAudioGraph(); await resumeAudio(); }
 })();
