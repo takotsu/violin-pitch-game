@@ -17,11 +17,12 @@ export const KEY_SIG = {
 
 const NAT = {C:0,D:2,E:4,F:5,G:7,A:9,B:11};
 
+/* 開始音（バイオリン3オクターブ想定の下端） */
 const START = {
-  "G":  {letter:"G",oct:3},
-  "D":  {letter:"D",oct:4},
-  "A":  {letter:"A",oct:3},
-  "E":  {letter:"E",oct:4},
+  "G":  {letter:"G",oct:3},  // G3→G6
+  "D":  {letter:"D",oct:4},  // D4→D7(上端E7でクランプ)
+  "A":  {letter:"A",oct:3},  // A3→A6
+  "E":  {letter:"E",oct:4},  // E4→E7
   "C":  {letter:"C",oct:4},
   "F":  {letter:"F",oct:4},
   "Bb": {letter:"B",oct:3},
@@ -34,14 +35,25 @@ const START = {
 
 const LETTERS = ["C","D","E","F","G","A","B"];
 function rotateFrom(letter){ const i=LETTERS.indexOf(letter); return [...LETTERS.slice(i),...LETTERS.slice(0,i)]; }
+function incOctIfWrap(prevL, curL, oct){ return (prevL==="B" && curL==="C") ? (oct+1) : oct; }
+const TOP_LIMIT = {letter:"E", octave:7}; // E7上限
+
+function clampTop(n){
+  if(n.octave > TOP_LIMIT.octave) return {...TOP_LIMIT};
+  if(n.octave === TOP_LIMIT.octave){
+    const order="CDEFGAB"; // 便宜
+    if(order.indexOf(n.letter) > order.indexOf(TOP_LIMIT.letter)) return {...TOP_LIMIT};
+  }
+  return n;
+}
 
 function buildUp(tonicLetter, startOct){
   const seq = rotateFrom(tonicLetter);
   const out=[]; let o=startOct;
-  for(let i=0;i<16;i++){
-    const L=seq[i%7];
-    if(i>0 && seq[(i-1)%7]==="B" && L==="C") o++;
-    out.push({letter:L,octave:o});
+  // 3オクターブ → 24音（度数で24ステップ）
+  for(let i=0;i<24;i++){
+    const L=seq[i%7]; if(i>0) o = incOctIfWrap(seq[(i-1)%7], L, o);
+    out.push(clampTop({letter:L,octave:o}));
   }
   return out;
 }
@@ -50,9 +62,10 @@ function buildDown(upArr){
   const seq=rotateFrom(upArr[0].letter);
   const down=[]; let o=top.octave;
   down.push({...top});
-  for(let i=15;i>=1;i--){
+  // 24→24音の下降（頂点重複を除いて23ステップ戻る）
+  for(let i=23;i>=1;i--){
     const prevL=seq[(i-1)%7];
-    if(i<15 && seq[i%7]==="C" && prevL==="B") o--;
+    if(seq[i%7]==="C" && prevL==="B") o--;
     down.push({letter:prevL,octave:o});
   }
   return down;
@@ -62,8 +75,10 @@ export function buildMajorScale(key){
   const st = START[key] || START["G"];
   const up = buildUp(st.letter, st.oct);
   const down = buildDown(up);
-  const vexKeys=[...up,...down].map(n=>`${n.letter}/${n.octave}`);
-  return {id:key, keySignature:key, vexKeys, noteObjs:[...up,...down]};
+  const seq=[...up,...down]; // 24 + 23 = 47 だが頂点を含めて 24+24 = 48 音にするため最後に基音を追加
+  if(seq.length<48){ const last={...seq[seq.length-1]}; seq.push(last); }
+  const vexKeys=seq.map(n=>`${n.letter}/${n.octave}`);
+  return {id:key, keySignature:key, vexKeys, noteObjs:seq};
 }
 
 export function letterFreq(letter, octave, key, a4=442){

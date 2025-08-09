@@ -9,12 +9,12 @@
 <body>
   <div id="topbar">
     <div id="mini-score" aria-live="polite">—</div>
-    <span id="app-version" class="version">v17</span>
+    <span id="app-version" class="version">v18</span>
   </div>
 
   <section id="controls">
-    <div class="row">
-      <label>スケールの調:
+    <div class="row tight">
+      <label class="w-grow">スケールの調:
         <select id="key-select">
           <option>G</option><option>D</option><option>A</option><option>E</option>
           <option>C</option><option>F</option><option>Bb</option><option>Eb</option>
@@ -22,27 +22,24 @@
         </select>
       </label>
 
-      <label>合格閾値（点）:
+      <label class="w-compact">合格閾値（点）:
         <select id="pass"></select>
       </label>
 
-      <div id="metro">
-        <label>BPM:
-          <input id="bpm" type="number" min="40" max="200" step="5" value="80" />
-        </label>
-        <label class="switch">
-          <input id="metroToggle" type="checkbox" />
-          <span>メトロノーム</span>
-        </label>
-        <span id="metro-led" aria-hidden="true"></span>
-      </div>
-    </div>
+      <label class="w-compact">BPM:
+        <input id="bpm" type="number" min="40" max="200" step="5" value="80" />
+      </label>
 
-    <div class="row">
-      <label>音量閾値（RMS）:
+      <label class="switch w-compact">
+        <input id="metroToggle" type="checkbox" />
+        <span>メトロ</span><span id="metro-led" aria-hidden="true"></span>
+      </label>
+
+      <label class="w-compact">音量閾値（RMS）:
         <input id="rms" type="number" min="0.001" max="0.02" step="0.001" value="0.002" />
       </label>
-      <div class="buttons">
+
+      <div class="buttons w-compact">
         <button id="start">開始</button>
         <button id="stop" disabled>停止</button>
       </div>
@@ -63,7 +60,7 @@
         </div>
         <div id="cents-bar"><div id="needle"></div></div>
       </div>
-      <div id="prog" aria-live="polite">音 1/32</div>
+      <div id="prog" aria-live="polite">音 1/48</div>
     </section>
   </main>
 
