@@ -16,15 +16,15 @@
   <header><h1>Violin Pitch Game (A=442Hz)</h1></header>
 
   <main>
-    <!-- 五線譜（譜面SVG＋カラオケCanvas重ね） -->
+    <!-- 五線譜（SVGの上にカラオケCanvasを重ねる） -->
     <section id="score-area">
       <div id="staff-wrap">
         <div id="staff"></div>
-        <canvas id="karaoke"></canvas> <!-- ユーザ音程vs正解を重ね描画 -->
+        <canvas id="karaoke"></canvas>
       </div>
     </section>
 
-    <!-- 100点／フィードバック -->
+    <!-- スコア／フィードバック -->
     <section id="score-panel">
       <div id="big-score">--</div>
       <div id="feedback">待機中…</div>
@@ -38,7 +38,7 @@
       <div id="cents-bar"><div id="needle"></div></div>
     </section>
 
-    <!-- 入力波形 -->
+    <!-- 入力波形（20秒スクロール） -->
     <section id="osc-area">
       <canvas id="osc"></canvas>
     </section>
@@ -52,18 +52,18 @@
         </select>
       </label>
 
-      <!-- 単音課題＋ランダム -->
       <label>課題音（単音）:
         <select id="note-select">
           <option>A4</option><option>B4</option><option>C5</option>
           <option>D5</option><option>E5</option><option>F5</option>
         </select>
       </label>
+
       <div class="buttons">
         <button id="random">ランダム出題（A4以外）</button>
       </div>
 
-      <!-- メトロノーム -->
+      <!-- メトロノーム（5刻みBPM） -->
       <div id="metro">
         <label>BPM:
           <input id="bpm" type="number" min="40" max="200" step="5" value="80">
@@ -78,7 +78,22 @@
     </section>
   </main>
 
-  <!-- 下部トースト警告（小さくも出せる） -->
+  <!-- 結果モーダル -->
+  <div id="result" aria-hidden="true">
+    <canvas id="confetti"></canvas>
+    <div class="card">
+      <div class="label">総合得点</div>
+      <div id="final-score">0</div>
+      <div id="praise">Bravo!!</div>
+      <div id="details"></div>
+      <div class="buttons">
+        <button id="again">もう一度</button>
+        <button id="close">閉じる</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- トースト -->
   <div id="toast" aria-live="polite" aria-atomic="true"></div>
 
   <script type="module" src="./app.js"></script>
