@@ -2,28 +2,70 @@
 <html lang="ja">
 <head>
   <meta charset="utf-8">
-  <title>Violin Pitch Game</title>
+  <title>Violin Pitch Game (A=442Hz)</title>
   <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
   <meta name="apple-mobile-web-app-capable" content="yes">
   <link rel="stylesheet" href="./style.css">
-  <!-- VexFlow（五線譜）CDN・固定版 -->
-  <script type="module">
-    import Vex from "https://cdn.jsdelivr.net/npm/vexflow@4.2.3/build/esm/flow.js";
-    window.Vex = Vex; // app.js から参照
-  </script>
+  <!-- ✅ VexFlow UMD（グローバルVex）で安定読込 -->
+  <script src="https://unpkg.com/vexflow@3.0.9/build/vexflow-min.js" defer></script>
 </head>
 <body>
-  <header>
-    <h1>Violin Pitch Game (A=442Hz)</h1>
-  </header>
+  <header><h1>Violin Pitch Game (A=442Hz)</h1></header>
+
+  <!-- 上部コントロール -->
+  <section id="controls">
+    <div class="row">
+      <label>モード:
+        <select id="mode">
+          <option value="tuner" selected>チューナー</option>
+          <option value="single">単音（下の課題音）</option>
+          <option value="g_scale_4bars">ト長調スケール（8分×4小節）</option>
+        </select>
+      </label>
+
+      <label>合格閾値（点）:
+        <select id="pass">
+          <option>70</option><option>75</option><option>80</option><option>85</option>
+          <option selected>90</option><option>95</option>
+        </select>
+      </label>
+
+      <div id="metro">
+        <label>BPM:
+          <input id="bpm" type="number" min="40" max="200" step="5" value="80">
+        </label>
+        <label class="switch">
+          <input id="metroToggle" type="checkbox">
+          <span>メトロノーム</span>
+        </label>
+        <span id="metro-led" aria-hidden="true"></span>
+      </div>
+    </div>
+
+    <div class="row">
+      <label class="grow">課題音（単音）:
+        <select id="note-select">
+          <option>A4</option><option>B4</option><option>C5</option>
+          <option>D5</option><option>E5</option><option>F5</option>
+        </select>
+      </label>
+      <div class="buttons">
+        <button id="start">開始</button>
+        <button id="stop" disabled>停止</button>
+      </div>
+    </div>
+  </section>
 
   <main>
-    <!-- 五線譜 -->
+    <!-- 五線譜（SVG + カラオケCanvas） -->
     <section id="score-area">
-      <div id="staff"></div>
+      <div id="staff-wrap">
+        <div id="staff"></div>
+        <canvas id="karaoke"></canvas>
+      </div>
     </section>
 
-    <!-- 100点満点の現在スコア -->
+    <!-- スコア／フィードバック -->
     <section id="score-panel">
       <div id="big-score">--</div>
       <div id="feedback">待機中…</div>
@@ -37,42 +79,31 @@
       <div id="cents-bar"><div id="needle"></div></div>
     </section>
 
-    <!-- 操作パネル -->
-    <section id="controls">
-      <label>モード:
-        <select id="mode">
-          <option value="single" selected>単音</option>
-          <!-- 将来: <option value="third">3度（後日）</option> -->
-        </select>
-      </label>
-
-      <!-- 課題音セレクタ：A4 + テスト用5音 -->
-      <label>課題音（単音）:
-        <select id="note-select">
-          <option>A4</option>
-          <option>B4</option>
-          <option>C5</option>
-          <option>D5</option>
-          <option>E5</option>
-          <option>F5</option>
-        </select>
-      </label>
-
-      <div class="buttons">
-        <button id="start">開始</button>
-        <button id="stop" disabled>停止</button>
-      </div>
-
-      <!-- 追加：ランダム出題（A4以外の5音から抽選） -->
-      <div class="buttons">
-        <button id="random">ランダム出題（A4以外）</button>
-      </div>
+    <!-- 入力波形（20秒スクロール） -->
+    <section id="osc-area">
+      <canvas id="osc"></canvas>
     </section>
   </main>
 
-  <!-- 下部トースト警告 -->
+  <!-- 結果モーダル -->
+  <div id="result" aria-hidden="true">
+    <canvas id="confetti"></canvas>
+    <div class="card">
+      <div class="label">総合得点</div>
+      <div id="final-score">0</div>
+      <div id="praise">Bravo!!</div>
+      <div id="details"></div>
+      <div class="buttons">
+        <button id="again">もう一度</button>
+        <button id="close">閉じる</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- トースト -->
   <div id="toast" aria-live="polite" aria-atomic="true"></div>
 
+  <!-- アプリ -->
   <script type="module" src="./app.js"></script>
 </body>
 </html>
