@@ -1,0 +1,78 @@
+<!doctype html>
+<html lang="ja">
+<head>
+  <meta charset="utf-8">
+  <title>Violin Pitch Game</title>
+  <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <link rel="stylesheet" href="./style.css">
+  <!-- VexFlow（五線譜）CDN・固定版 -->
+  <script type="module">
+    import Vex from "https://cdn.jsdelivr.net/npm/vexflow@4.2.3/build/esm/flow.js";
+    window.Vex = Vex; // app.js から参照
+  </script>
+</head>
+<body>
+  <header>
+    <h1>Violin Pitch Game (A=442Hz)</h1>
+  </header>
+
+  <main>
+    <!-- 五線譜 -->
+    <section id="score-area">
+      <div id="staff"></div>
+    </section>
+
+    <!-- 100点満点の現在スコア -->
+    <section id="score-panel">
+      <div id="big-score">--</div>
+      <div id="feedback">待機中…</div>
+    </section>
+
+    <!-- ±50c バー -->
+    <section id="cents-area">
+      <div id="cents-scale">
+        <span>-50c</span><span>-25c</span><span>0c</span><span>+25c</span><span>+50c</span>
+      </div>
+      <div id="cents-bar"><div id="needle"></div></div>
+    </section>
+
+    <!-- 操作パネル -->
+    <section id="controls">
+      <label>モード:
+        <select id="mode">
+          <option value="single" selected>単音</option>
+          <!-- 将来: <option value="third">3度（後日）</option> -->
+        </select>
+      </label>
+
+      <!-- 課題音セレクタ：A4 + テスト用5音 -->
+      <label>課題音（単音）:
+        <select id="note-select">
+          <option>A4</option>
+          <option>B4</option>
+          <option>C5</option>
+          <option>D5</option>
+          <option>E5</option>
+          <option>F5</option>
+        </select>
+      </label>
+
+      <div class="buttons">
+        <button id="start">開始</button>
+        <button id="stop" disabled>停止</button>
+      </div>
+
+      <!-- 追加：ランダム出題（A4以外の5音から抽選） -->
+      <div class="buttons">
+        <button id="random">ランダム出題（A4以外）</button>
+      </div>
+    </section>
+  </main>
+
+  <!-- 下部トースト警告 -->
+  <div id="toast" aria-live="polite" aria-atomic="true"></div>
+
+  <script type="module" src="./app.js"></script>
+</body>
+</html>
