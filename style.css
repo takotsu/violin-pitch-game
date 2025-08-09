@@ -1,62 +1,56 @@
-:root{
-  --bg:#0b0d12; --fg:#e8eef7; --accent:#2dd4bf;
+:root{ --bg:#0b0d12; --fg:#e8eef7; --accent:#2dd4bf;
   --warn:#d97706; --err:#b91c1c; --info:#374151;
-  --good:#10b981; --mid:#f59e0b; --bad:#ef4444;
-}
+  --good:#10b981; --mid:#f59e0b; --bad:#ef4444;}
 *{box-sizing:border-box}
 html,body{margin:0;padding:0;background:var(--bg);color:var(--fg);
   font-family:system-ui,-apple-system,"Segoe UI",Roboto,"Hiragino Kaku Gothic ProN","Yu Gothic",sans-serif}
-header{padding:12px 16px;text-align:center;border-bottom:1px solid #1f2937;position:relative}
-h1{font-size:18px;margin:0}
-.version{position:absolute;right:10px;top:8px;font-size:11px;opacity:.8}
-main{padding:12px;max-width:680px;margin:0 auto}
 
-/* 上部コントロール */
-#controls{max-width:680px;margin:10px auto 0;display:grid;gap:8px;padding:0 12px}
+/* 上部バー */
+#topbar{position:fixed;left:0;right:0;top:0;height:32px;display:flex;align-items:center;justify-content:space-between;
+  padding:0 12px;background:#0f131a;border-bottom:1px solid #1f2937;z-index:10000}
+#mini-score{font-size:16px;font-weight:800}
+#mini-score.green{color:var(--good)} #mini-score.yellow{color:var(--mid)} #mini-score.red{color:var(--bad)}
+.version{font-size:11px;opacity:.8}
+
+main{padding:44px 12px 12px;max-width:760px;margin:0 auto}
+
+#controls{max-width:760px;margin:42px auto 0;display:grid;gap:8px;padding:0 12px}
 #controls .row{display:flex;gap:8px;align-items:end;flex-wrap:wrap}
-#controls label{display:block;font-size:14px}
+#controls label{display:block;font-size:14px;flex:1;min-width:140px}
 #controls select,#controls input{width:100%;padding:8px;border-radius:6px;border:1px solid #1f2937;background:#0f131a;color:var(--fg)}
 #controls .buttons{display:flex;gap:8px;flex:1;min-width:240px}
 button{flex:1;padding:10px 12px;border:0;border-radius:8px;font-weight:700;background:#111827;color:var(--fg);cursor:pointer}
 #start{background:#2563eb} #stop{background:#6b7280}
+body.running #start{background:#10b981}
 #metro{display:flex;align-items:center;gap:10px}
 #metro-led{display:inline-block;width:10px;height:10px;border-radius:50%;background:#334155}
 .switch{display:flex;align-items:center;gap:6px}
-button.tuner{background:#0e7490}
 
-/* 五線譜（縦 0.8 倍） */
-#score-area{background:#0f131a;border:1px solid #1f2937;border-radius:8px;padding:6px;margin:10px auto 0;max-width:680px}
-#staff-wrap{position:relative;width:100%;height:152px}
+/* 助言＋点数（五線譜のすぐ上・右） */
+#score-area{position:relative;background:#0f131a;border:1px solid #1f2937;border-radius:8px;padding:6px;margin:6px auto 0}
+#advice{position:absolute;left:12px;top:8px;font-size:24px;font-weight:900;
+  color:#e6faff;text-shadow:0 0 10px rgba(45,212,191,.35), 0 0 20px rgba(45,212,191,.2)}
+#advice.good{color:#b7ffcf;text-shadow:0 0 14px rgba(16,185,129,.6)}
+#advice.warn{color:#ffe1a6;text-shadow:0 0 14px rgba(245,158,11,.5)}
+#advice.bad{ color:#ffb3b3;text-shadow:0 0 14px rgba(239,68,68,.5)}
+#big-score{position:absolute;right:14px;top:6px;font-size:28px;font-weight:900;color:#d1e8ff}
+
+#staff-wrap{position:relative;width:100%;height:420px;margin-top:28px}
 #staff{position:absolute;inset:0}
-#karaoke{position:absolute;inset:0;pointer-events:none}
 
-/* スコア／フィードバック */
 #score-panel{text-align:center;padding:8px 0}
-#big-score{font-size:58px;font-weight:800;line-height:1}
-#big-score.green{color:var(--good)}
-#big-score.yellow{color:var(--mid)}
-#big-score.red{color:var(--bad)}
-#feedback{margin-top:6px;font-size:14px;opacity:.9;min-height:38px}
-
-/* ±50c バー */
-#cents-area{margin-top:8px}
-#cents-scale{display:flex;justify-content:space-between;font-size:12px;color:#9ca3af;margin-bottom:6px;max-width:680px;margin-left:auto;margin-right:auto}
-#cents-bar{position:relative;height:10px;background:#111827;border:1px solid #1f2937;border-radius:999px;overflow:hidden;max-width:680px;margin:0 auto}
+#cents-scale{display:flex;justify-content:space-between;font-size:12px;color:#9ca3af;margin-bottom:6px}
+#cents-bar{position:relative;height:10px;background:#111827;border:1px solid #1f2937;border-radius:999px;overflow:hidden}
 #cents-bar::before{content:"";position:absolute;top:0;bottom:0;width:1px;background:#334155;left:50%}
 #needle{position:absolute;top:-6px;width:2px;height:22px;background:var(--accent);left:50%}
+#prog{margin-top:6px;font-size:13px;opacity:.9}
 
-/* 波形（20秒スクロール、縦 0.8 倍） */
-#osc-area{margin-top:10px;background:#0f131a;border:1px solid #1f2937;border-radius:8px;padding:6px;max-width:680px;margin-left:auto;margin-right:auto}
-#osc{width:100%;height:88px;display:block}
-
-/* トースト */
+/* トースト／モーダル */
 #toast{position:fixed;left:0;right:0;bottom:0;padding:10px 12px;font-size:13px;text-align:center;
   background:rgba(40,40,40,.95);color:#fff;transform:translateY(100%);transition:transform .25s ease;z-index:9999}
 #toast.show{transform:translateY(0)}
 #toast.warn{background:var(--warn)} #toast.error{background:var(--err)} #toast.info{background:var(--info)}
 #toast.tiny{font-size:11px;padding:6px 8px}
-
-/* 結果／エラー モーダル */
 #result,#error-modal{position:fixed;inset:0;background:rgba(0,0,0,.6);display:none;align-items:center;justify-content:center;z-index:9998}
 #result.show,#error-modal.show{display:flex}
 #confetti{position:absolute;inset:0}
@@ -66,9 +60,8 @@ button.tuner{background:#0e7490}
   text-align:center; box-shadow:0 10px 40px rgba(0,0,0,.5);
 }
 #result .label{font-size:14px;opacity:.8;margin-bottom:6px}
-#final-score{font-size:68px;font-weight:900;margin:6px 0 4px 0}
-#praise{font-size:18px;margin:2px 0 8px 0}
-#details{font-size:12px;opacity:.8;margin-bottom:10px}
+#praise{font-size:20px;margin:8px 0}
+#details{font-size:12px;opacity:.85;margin-bottom:10px}
 #result .buttons,#error-modal .buttons{display:flex;gap:8px}
 #again{background:#10b981} #close{background:#374151}
 #error-modal h2{margin:6px 0 10px 0;font-size:16px}

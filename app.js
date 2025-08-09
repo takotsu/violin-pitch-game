@@ -1,53 +1,29 @@
 import { ALL_KEYS, buildMajorScale, letterFreq } from "./scales.js";
-import { renderScale, renderTunerStaff, highlightIndex } from "./score.js";
+import { renderScale, highlightIndex } from "./score.js";
 
-/* ========== フォールバック付き VexFlow ローダ ========== */
-async function ensureVexFlow(){
-  if(window.Vex && window.Vex.Flow) return true;
-  const cdns = [
-    "https://cdn.jsdelivr.net/npm/vexflow@3.0.9/build/vexflow-min.js",
-    "https://unpkg.com/vexflow@3.0.9/build/vexflow-min.js"
-  ];
-  for(const url of cdns){
-    try{
-      await loadScript(url, 7000);
-      if(window.Vex && window.Vex.Flow) return true;
-    }catch(e){ pushError(new Error(`VexFlow load fail: ${url}`)); }
-  }
-  throw new Error("VexFlow が読み込めていません。CDNブロックやネットワークを確認してください。");
-}
-function loadScript(src, timeoutMs=7000){
-  return new Promise((res,rej)=>{
-    const s=document.createElement('script');
-    s.src=src; s.crossOrigin="anonymous"; s.referrerPolicy="no-referrer";
-    let to=setTimeout(()=>{ s.remove(); rej(new Error("timeout")); }, timeoutMs);
-    s.onload=()=>{ clearTimeout(to); res(); };
-    s.onerror=()=>{ clearTimeout(to); rej(new Error("onerror")); };
-    document.head.appendChild(s);
-  });
-}
+/* ===== 設定 ===== */
+const A4_REF_HZ = 442;
+const STUCK_SEC_BEFORE_AUTONEXT = 3;
+const COOLDOWN_NEXT_MS = 220;
+const PASS_BAND_CENTS = 15;
 
-/* ========== グローバル・エラーログ（一覧ポップアップ） ========== */
+/* ===== エラーログ ===== */
 const errorLog = [];
 function pushError(e){
   const msg = (e?.message||e)?.toString();
   const stack = e?.error?.stack || e?.stack || "";
   const entry = `${new Date().toLocaleString()} : ${msg}\n${stack}`;
-  errorLog.push(entry);
-  renderErrorModal();
+  errorLog.push(entry); renderErrorModal();
 }
-window.addEventListener('error',(ev)=>{ pushError(ev); notify('エラーが発生しました（詳細を見るをタップ）','error',4000); showErrorModal(); });
-window.addEventListener('unhandledrejection',(ev)=>{ pushError(ev.reason||ev); notify('エラーが発生しました（詳細を見るをタップ）','error',4000); showErrorModal(); });
-function renderErrorModal(){
-  const list=document.getElementById('error-list'); if(!list) return;
-  list.innerHTML=""; errorLog.slice(-40).forEach(t=>{ const li=document.createElement('li'); li.textContent=t; list.appendChild(li); });
-}
+window.addEventListener('error',(ev)=>{ pushError(ev); notify('エラーが発生（詳細を見るをタップ）','error',3500); showErrorModal(); });
+window.addEventListener('unhandledrejection',(ev)=>{ pushError(ev.reason||ev); notify('エラーが発生（詳細を見るをタップ）','error',3500); showErrorModal(); });
+function renderErrorModal(){ const list=document.getElementById('error-list'); if(!list) return; list.innerHTML=""; errorLog.slice(-80).forEach(t=>{ const li=document.createElement('li'); li.textContent=t; list.appendChild(li); }); }
 function showErrorModal(){ const m=document.getElementById('error-modal'); m.classList.add('show'); m.setAttribute('aria-hidden','false'); }
 function hideErrorModal(){ const m=document.getElementById('error-modal'); m.classList.remove('show'); m.setAttribute('aria-hidden','true'); }
 document.getElementById('err-close').onclick=hideErrorModal;
 document.getElementById('err-copy').onclick=async()=>{ await navigator.clipboard.writeText(errorLog.join('\n\n')); notify('エラー内容をコピーしました。','info',2000); };
 
-/* ========== トースト/通知 ========== */
+/* ===== 通知 ===== */
 let toastTimer;
 function notify(msg, level='warn', ms=2500, tiny=false){
   const el=document.getElementById('toast');
@@ -55,43 +31,52 @@ function notify(msg, level='warn', ms=2500, tiny=false){
   clearTimeout(toastTimer); toastTimer=setTimeout(()=>el.className=el.className.replace('show',''), ms);
 }
 
-/* ========== Wake Lock（ページ表示中はスリープさせない） ========== */
-let wakeLock=null;
-async function requestWakeLock(){
-  try{ if('wakeLock' in navigator){ wakeLock=await navigator.wakeLock.request('screen'); } }
-  catch(e){ /* 非対応は無視 */ }
+/* ===== Wake Lock ===== */
+let wakeLock = null;
+const nosleepVideo = document.getElementById('nosleep');
+async function keepAwakeEnable(){
+  try{
+    if('wakeLock' in navigator){
+      wakeLock = await navigator.wakeLock.request('screen');
+      wakeLock.addEventListener('release', ()=>{});
+    }else{
+      if(nosleepVideo && nosleepVideo.paused){ await nosleepVideo.play().catch(()=>{}); }
+    }
+  }catch{}
 }
-document.addEventListener('visibilitychange', async()=>{ if(!document.hidden) requestWakeLock(); });
-
-/* ========== A=442 util / スコア ========== */
-const A4_REF_HZ=442;
-function centsDiff(f_est,f_tgt){ return 1200*Math.log2(f_est/f_tgt); }
-function scoreFromCents(absC){ const c=Math.min(200,Math.max(0,absC)); return Math.round(100*(1-c/200)); }
-
-/* ========== チューナー最寄り音名 ========== */
-const NOTE_ORDER=["C","C#","D","D#","E","F","F#","G","G#","A","A#","B"];
-function nearestNoteName(freq){
-  if(!freq) return "A4";
-  const n = Math.round(12*Math.log2(freq/A4_REF_HZ))+ 9 + 4*12;
-  const octave = Math.floor(n/12)-4; const idx=((n%12)+12)%12;
-  return `${NOTE_ORDER[idx]}${4+octave}`;
+async function keepAwakeDisable(){
+  try{ if(wakeLock){ await wakeLock.release(); wakeLock=null; } }catch{}
+  try{ if(nosleepVideo && !nosleepVideo.paused){ nosleepVideo.pause(); } }catch{}
 }
 
-/* ========== 励まし（0.7sスロットリング） ========== */
-const COACH = ["大丈夫！ここから整えていきましょう！","いい姿勢！次の1音もいきましょう！","今の修正ナイス！もう一回！",
-"肩の力を抜いて、指をスッと置いて！","焦らず弓をゆっくり。できます！","耳、よく聴けてます！自信を持って！",
-"フォーム安定！その調子！","深呼吸、もう一回だけ！","良い挑戦！ここから伸びます！","音の芯に近づいてます！もう一押し！"];
-const SHORT_PRAISE = ["いい音！","キレてます！","冴えてます！","安定！","素晴らしい！","美しい！","完璧！","ナイス！"];
-let lastEncourage=0;
-function encourage(score){
-  const now=performance.now(); if(now-lastEncourage<700) return "";
-  lastEncourage=now; return " " + (score>=70? SHORT_PRAISE[Math.floor(Math.random()*SHORT_PRAISE.length)]
-                                             : COACH[Math.floor(Math.random()*COACH.length)]);
+/* ===== VexFlow ===== */
+async function ensureVexFlow(){
+  if(window.Vex?.Flow) return true;
+  const cdns = [
+    "https://cdn.jsdelivr.net/npm/vexflow@3.0.9/build/vexflow-min.js",
+    "https://unpkg.com/vexflow@3.0.9/build/vexflow-min.js"
+  ];
+  for(const url of cdns){
+    try{ await loadScript(url, 7000); if(window.Vex?.Flow) return true; }
+    catch(e){ pushError(new Error(`VexFlow load fail: ${url}`)); }
+  }
+  pushError(new Error("VexFlowをCDNから読み込めませんでした。フォールバック描画に切り替えます。"));
+  return false;
+}
+function loadScript(src, timeoutMs=7000){
+  return new Promise((res,rej)=>{
+    const s=document.createElement('script'); s.src=src; s.crossOrigin="anonymous"; s.referrerPolicy="no-referrer";
+    const to=setTimeout(()=>{ s.remove(); rej(new Error("timeout")); }, timeoutMs);
+    s.onload=()=>{ clearTimeout(to); res(); };
+    s.onerror=()=>{ clearTimeout(to); rej(new Error("onerror")); };
+    document.head.appendChild(s);
+  });
 }
 
-/* ========== UI refs ========== */
+/* ===== UI ===== */
+const adviceEl=document.getElementById('advice');
 const bigScoreEl=document.getElementById('big-score');
-const feedbackEl=document.getElementById('feedback');
+const miniScoreEl=document.getElementById('mini-score');
 const needleEl=document.getElementById('needle');
 const passSel=document.getElementById('pass');
 const btnStart=document.getElementById('start');
@@ -99,292 +84,255 @@ const btnStop=document.getElementById('stop');
 const bpmInput=document.getElementById('bpm');
 const metroLed=document.getElementById('metro-led');
 const metroToggle=document.getElementById('metroToggle');
-const tunerBtn=document.getElementById('tunerBtn');
 const keySelect=document.getElementById('key-select');
-const karaokeCanvas=document.getElementById('karaoke');
-const oscCanvas=document.getElementById('osc');
+const rmsInput=document.getElementById('rms');
+const progEl=document.getElementById('prog');
 
-/* ========== 五線譜/状態 ========== */
-let renderCtx=null;
+/* ===== 状態 ===== */
+let renderCtx=null, scaleData=null;
 let currentKey="G";
+let passThreshold=90;
+let LEVEL_RMS_THRESHOLD = 0.002;
+let sessionRunning=false;
+let idx=0;
+let lastProgressTime=0;
+let lastValidTime=0;
+let lastAdvanceTime=0;
+let mustExitPassBand=false;
+let scores=[];
 
-/* ========== 表示ユーティリティ ========== */
-function colorScore(s){ bigScoreEl.className=""; if(s>=90) bigScoreEl.classList.add('green'); else if(s>=70) bigScoreEl.classList.add('yellow'); else bigScoreEl.classList.add('red');}
+/* ===== 表示 ===== */
+function colorMini(diffAbs){
+  miniScoreEl.className="";
+  if(diffAbs<=5) miniScoreEl.classList.add('green'), miniScoreEl.textContent="◎";
+  else if(diffAbs<=15) miniScoreEl.classList.add('yellow'), miniScoreEl.textContent="◯";
+  else miniScoreEl.classList.add('red'), miniScoreEl.textContent="△";
+}
 function updateNeedle(c){ const clamped=Math.max(-50,Math.min(50,c)); const pct=(clamped+50)/100; needleEl.style.left=`calc(${pct*100}% - 1px)`; }
+let lastAdviceTs = 0;
+function setAdviceThrottled(cents, score){
+  const now = performance.now();
+  if(now - lastAdviceTs < 140) return; // 更新頻度を下げる
+  lastAdviceTs = now;
+  const abs=Math.abs(cents);
+  const arrow = cents>0 ? "↑" : (cents<0 ? "↓" : "＝");
+  const text = `${(abs|0)}c ${arrow}`;
+  adviceEl.className="";
+  if(abs<=5){ adviceEl.classList.add('good'); adviceEl.textContent = text+"（そのまま）"; }
+  else if(abs<=20){ adviceEl.classList.add('warn'); adviceEl.textContent = text+"（微調整）"; }
+  else { adviceEl.classList.add('bad'); adviceEl.textContent = text+"（思い切って修正）"; }
+  bigScoreEl.textContent = `${score}`;
+}
 
-/* ========== Audio（マイクは常時） ========== */
-let ac, workletNode, mic, analyser, mediaStream=null;
-let lowLevelSince=0, lastPitchWarn=0;
-let audioReady=false;
-let sessionRunning=false; // 「開始/停止」対象
-const LEVEL_RMS_THRESHOLD = 0.02;
-
-/* ========== スケール進行 ========== */
-let tunerOn=false, inScale=false;
-let scaleData=null;
-let idx=0, firstScores=[], passThreshold=90;
-
-/* ========== メトロノーム：要素オーディオ（大音量） ========== */
-let metroTimer=null, metroOn=false;
+/* ===== メトロノーム ===== */
+let metroTimer=null, metroOn=false, beat=0;
 let strongPool=[], weakPool=[], poolIdxS=0, poolIdxW=0;
-function makeBeepUrl(freq=1500, durMs=80, sr=44100){
+function makeBeepUrl(freq=2400, durMs=120, sr=44100){
   const len=Math.floor(sr*durMs/1000), wavLen=44+len*2;
   const buf=new ArrayBuffer(wavLen); const dv=new DataView(buf);
   const wrStr=(o,s)=>{ for(let i=0;i<s.length;i++) dv.setUint8(o+i,s.charCodeAt(i)); };
   wrStr(0,"RIFF"); dv.setUint32(4,wavLen-8,true); wrStr(8,"WAVE"); wrStr(12,"fmt "); dv.setUint32(16,16,true);
   dv.setUint16(20,1,true); dv.setUint16(22,1,true); dv.setUint32(24,sr,true); dv.setUint32(28,sr*2,true);
   dv.setUint16(32,2,true); dv.setUint16(34,16,true); wrStr(36,"data"); dv.setUint32(40,len*2,true);
-  let off=44; for(let i=0;i<len;i++){ const t=i/sr; const env=Math.exp(-8*i/len); const s=Math.sign(Math.sin(2*Math.PI*freq*t))*0.95*env; dv.setInt16(off, s*32767, true); off+=2; }
+  let off=44; for(let i=0;i<len;i++){ const t=i/sr; const env=Math.exp(-6*i/len); const s=Math.sign(Math.sin(2*Math.PI*freq*t))*0.98*env; dv.setInt16(off, s*32767, true); off+=2; }
   return URL.createObjectURL(new Blob([buf], {type:"audio/wav"}));
 }
 function initBeepPool(){
-  const urlS=makeBeepUrl(2400,90); const urlW=makeBeepUrl(1700,80);
-  strongPool=Array.from({length:6},()=>{const a=new Audio(urlS); a.preload="auto"; a.playsInline=true; a.volume=1.0; return a;});
-  weakPool  =Array.from({length:6},()=>{const a=new Audio(urlW); a.preload="auto"; a.playsInline=true; a.volume=1.0; return a;});
+  const urlS=makeBeepUrl(2500,120); const urlW=makeBeepUrl(1700,100);
+  strongPool=Array.from({length:8},()=>{const a=new Audio(urlS); a.preload="auto"; a.playsInline=true; a.volume=1.0; return a;});
+  weakPool  =Array.from({length:8},()=>{const a=new Audio(urlW); a.preload="auto"; a.playsInline=true; a.volume=1.0; return a;});
 }
 function playBeep(strong=false){ const pool=strong?strongPool:weakPool; const a=pool[strong?(poolIdxS++%pool.length):(poolIdxW++%pool.length)]; a.currentTime=0; a.play().catch(()=>{}); }
 function startMetronome(){
   if(metroTimer) clearInterval(metroTimer);
   if(!metroOn || !sessionRunning) return;
-  const bpm=+bpmInput.value, beatMs=60_000/bpm; let beat=0;
-  metroTimer=setInterval(()=>{ playBeep(beat%4===0); metroLed.style.background="#22c55e"; setTimeout(()=>metroLed.style.background="#334155",120); beat++; }, beatMs);
+  const bpm=+bpmInput.value, beatMs=60_000/bpm; beat=0;
+  metroTimer=setInterval(()=>{
+    playBeep(beat%4===0);
+    metroLed.style.background="#22c55e";
+    setTimeout(()=>metroLed.style.background="#334155",120);
+    if((beat%4===0) && sessionRunning){
+      const now=performance.now();
+      if(now - lastProgressTime > STUCK_SEC_BEFORE_AUTONEXT*1000 && now - lastValidTime < 1200){
+        idx = Math.min(idx+1, scaleData.noteObjs.length);
+        if(idx >= scaleData.noteObjs.length){ finishScale(); }
+        else { highlightIndex(renderCtx, idx); progEl.textContent=`音 ${idx+1}/${scaleData.noteObjs.length}`; lastProgressTime=now; mustExitPassBand=true; }
+      }
+    }
+    beat++;
+  }, beatMs);
 }
 function stopMetronome(){ if(metroTimer) clearInterval(metroTimer); metroTimer=null; }
 
-/* ========== 波形（20秒スクロール：常時） ========== */
-let lastOscT=0;
-function drawOsc(ts){
-  if(!analyser){ requestAnimationFrame(drawOsc); return; }
-  const ctx=oscCanvas.getContext('2d');
-  const w=oscCanvas.width=oscCanvas.clientWidth;
-  const h=oscCanvas.height=oscCanvas.clientHeight;
-
-  const pxPerSec=w/20;
-  const dt=lastOscT? (ts-lastOscT)/1000:0; lastOscT=ts;
-
-  const shift=Math.max(1,Math.floor(pxPerSec*dt));
-  const img=ctx.getImageData(shift,0,w-shift,h);
-  ctx.putImageData(img,0,0);
-  ctx.fillStyle="#0f131a"; ctx.fillRect(w-shift,0,shift,h);
-
-  const data=new Uint8Array(analyser.fftSize); analyser.getByteTimeDomainData(data);
-  ctx.strokeStyle="#90cdf4"; ctx.lineWidth=1; ctx.beginPath();
-  for(let y=0;y<h;y++){
-    const i=Math.floor(y/h*data.length);
-    const v=(data[i]-128)/128;
-    const x=w-1; const yy=h/2 - v*(h*0.45);
-    if(y===0) ctx.moveTo(x,yy); else ctx.lineTo(x,yy);
-  }
-  ctx.stroke();
-  requestAnimationFrame(drawOsc);
-}
-
-/* ========== カラオケ描画（※先に定義しておく：参照エラー対策） ========== */
-const karaokePts=[];
-function drawKaraoke(centsOrNull){
-  const ctx=karaokeCanvas.getContext('2d'); const w=karaokeCanvas.width, h=karaokeCanvas.height;
-  ctx.clearRect(0,0,w,h);
-  ctx.strokeStyle="rgba(200,200,200,0.4)"; ctx.lineWidth=1; ctx.beginPath(); ctx.moveTo(0,h*0.5); ctx.lineTo(w,h*0.5); ctx.stroke();
-
-  if(inScale && scaleData){
-    const stepW=w/scaleData.vexKeys.length;
-    ctx.fillStyle="rgba(45,212,191,0.15)";
-    ctx.fillRect(0,0, stepW*(idx+1), h);
-    for(let i=0;i<=scaleData.vexKeys.length;i++){
-      const x=i*stepW;
-      ctx.strokeStyle= (i%8===0) ? "rgba(120,160,170,0.45)" : "rgba(100,160,160,0.25)";
-      if(i%2===0){ ctx.beginPath(); ctx.moveTo(x,0); ctx.lineTo(x,h); ctx.stroke(); }
-    }
-  }
-  if(centsOrNull!=null){
-    const c=Math.max(-50,Math.min(50,centsOrNull));
-    const y=h*0.5 - (c/50)*(h*0.4);
-    const x= inScale && scaleData ? (w/scaleData.vexKeys.length)*(idx + 0.5) : w*0.5;
-    karaokePts.push({x,y}); if(karaokePts.length>160) karaokePts.shift();
-    ctx.strokeStyle="rgba(45,212,191,0.95)"; ctx.lineWidth=2; ctx.beginPath();
-    karaokePts.forEach((p,i)=>{ if(i===0) ctx.moveTo(p.x,p.y); else ctx.lineTo(p.x,p.y); }); ctx.stroke();
-  }
-}
-
-/* ========== 解析結果受取（常時） ========== */
-function onPitchMessage(ev){
-  const {f0, conf, rms, dropped, now} = ev.data || {};
-  const tNow = now || performance.now();
-
-  if(rms < LEVEL_RMS_THRESHOLD){
-    if(!lowLevelSince) lowLevelSince=tNow;
-    if(tNow - lowLevelSince > 1500){ notify('入力が小さいです。マイクを近づけてください。','warn',1800,true); lowLevelSince=tNow; }
-  }else lowLevelSince=0;
-
-  if(dropped) notify('処理が追いついていません。他アプリを閉じてください。','warn',3000);
-
-  // チューナー：常に最寄り音へスナップ
-  if(tunerOn){
-    if(!f0){ updateNeedle(0); feedbackEl.textContent="チューナー待機中…"; return; }
-    const nn=nearestNoteName(f0);
-    const m=nn.match(/^([A-G])(#?)(\d)$/); const map={C:0,"C#":1,D:2,"D#":3,E:4,F:5,"F#":6,G:7,"G#":8,A:9,"A#":10,B:11};
-    const semi=(map[m[1]+(m[2]||"")]-9)+ (parseInt(m[3],10)-4)*12; const fTarget=A4_REF_HZ*Math.pow(2,semi/12);
-    const cents=centsDiff(f0,fTarget); const sc=scoreFromCents(Math.abs(cents));
-    bigScoreEl.textContent=String(sc); colorScore(sc);
-    feedbackEl.textContent=`チューナー: ${nn}` + encourage(sc);
-    updateNeedle(cents); drawKaraoke(cents);
-    return;
-  }
-
-  // セッション外：針と波形だけ
-  if(!sessionRunning){
-    if(!f0){ updateNeedle(0); return; }
-    if(scaleData){
-      const n=scaleData.noteObjs[Math.min(idx, scaleData.noteObjs.length-1)];
-      const fTarget=letterFreq(n.letter,n.octave,scaleData.keySignature,A4_REF_HZ);
-      const cents=centsDiff(f0,fTarget);
-      updateNeedle(cents); drawKaraoke(cents);
-    }
-    return;
-  }
-
-  // セッション中（スケール）
-  if(!f0 || conf<0.5 || rms<LEVEL_RMS_THRESHOLD){
-    drawKaraoke(null);
-    if(tNow - lastPitchWarn > 2000){ feedbackEl.textContent='検出が不安定です。一定の弓圧で弾いてください。'; lastPitchWarn=tNow; }
-    return;
-  }
-  const cur=scaleData.noteObjs[idx];
-  const fTarget=letterFreq(cur.letter,cur.octave,scaleData.keySignature,A4_REF_HZ);
-  const cents=centsDiff(f0,fTarget);
-  const sc=scoreFromCents(Math.abs(cents));
-  bigScoreEl.textContent=String(sc); colorScore(sc);
-  feedbackEl.textContent=`音 ${idx+1}/${scaleData.noteObjs.length}` + encourage(sc);
-  updateNeedle(cents); drawKaraoke(cents);
-
-  if(firstScores[idx]==null){ firstScores[idx]=sc; }
-  if(sc >= passThreshold){
-    idx++;
-    if(idx >= scaleData.noteObjs.length){ finishScale(); return; }
-    highlightIndex(renderCtx, idx, Math.min(idx+1, scaleData.noteObjs.length-1));
-  }
-}
-
-/* ========== 結果 ========== */
-function finishScale(){
-  stopMetronome();
-  const valid=firstScores.filter(x=>typeof x==='number');
-  const avg=valid.length? Math.round(valid.reduce((s,x)=>s+x,0)/valid.length):0;
-  showResult(avg); stopSession();
-}
-function showResult(final){
-  const resultEl=document.getElementById('result');
-  const finalScoreEl=document.getElementById('final-score');
-  const praiseEl=document.getElementById('praise');
-  const detailsEl=document.getElementById('details');
-  const PRAISES=["すごい！モーツァルトかと思いました！","今日の主役です！","響きが美しいです！","音程が澄み切っています！","ピッチコントロールが神！","耳が良すぎます！"];
-  praiseEl.textContent=PRAISES[Math.floor(Math.random()*PRAISES.length)];
-  detailsEl.textContent=`各音は「最初に検出したスコア」を平均化。最終: ${final} 点`;
-  let v=0; const t0=performance.now(), dur=900;
-  (function anim(t){const r=Math.min(1,(t-t0)/dur); v=Math.floor(final*r*r+0.5); finalScoreEl.textContent=String(v); if(r<1) requestAnimationFrame(anim);})(performance.now());
-  resultEl.classList.add('show'); resultEl.setAttribute('aria-hidden','false');
-  document.getElementById('again').onclick=()=>{ resultEl.classList.remove('show'); resultEl.setAttribute('aria-hidden','true'); startSession(); };
-  document.getElementById('close').onclick=()=>{ resultEl.classList.remove('show'); resultEl.setAttribute('aria-hidden','true'); };
-}
-
-/* ========== エンジン起動（マイクは常時ON） ========== */
-async function startEngine(){
+/* ===== Audio ===== */
+let ac, workletNode, mic, analyser, mediaStream=null, audioReady=false;
+async function startAudioGraph(){
   if(audioReady) return;
   try{
-    await requestWakeLock();
     ac=new (window.AudioContext||window.webkitAudioContext)({latencyHint:"interactive"});
     await ac.audioWorklet.addModule('./pitch-worklet.js');
-    mediaStream = await navigator.mediaDevices.getUserMedia({audio:{echoCancellation:false, noiseSuppression:false, autoGainControl:false}});
+    mediaStream = await navigator.mediaDevices.getUserMedia({
+      audio:{ echoCancellation:false, noiseSuppression:false, autoGainControl:false, channelCount:1 }
+    });
     mic=ac.createMediaStreamSource(mediaStream);
     analyser=ac.createAnalyser(); analyser.fftSize=2048;
     workletNode=new AudioWorkletNode(ac,'pitch-detector',{numberOfInputs:1,numberOfOutputs:0});
-    workletNode.port.onmessage=onPitchMessage;
+    workletNode.port.onmessage=onWorkletMessage;
     mic.connect(analyser); mic.connect(workletNode);
     initBeepPool();
     audioReady=true;
-    requestAnimationFrame(drawOsc);
-    notify('マイク準備が完了しました。','info',1500,true);
-  }catch(e){ pushError(e); notify('マイクの初期化に失敗しました。上の「エラー情報」を確認してください。','error',5000); }
+  }catch(e){ pushError(e); notify('マイク初期化に失敗。エラー情報を確認してください。','error',5000); }
+}
+async function stopAudioGraph(){
+  try{
+    if(workletNode){ try{ workletNode.disconnect(); }catch{} workletNode.port.onmessage=null; workletNode=null; }
+    if(analyser){ try{ analyser.disconnect(); }catch{} analyser=null; }
+    if(mic){ try{ mic.disconnect(); }catch{} mic=null; }
+    if(mediaStream){ try{ mediaStream.getTracks().forEach(t=>t.stop()); }catch{} mediaStream=null; }
+    if(ac){ try{ await ac.suspend(); }catch{} try{ await ac.close(); }catch{} ac=null; }
+  }finally{ audioReady=false; }
+}
+async function resumeAudio(){ try{ if(ac && ac.state!=='running'){ await ac.resume(); } }catch(e){ pushError(e); }}
+
+/* 可視・不可視 */
+document.addEventListener('visibilitychange', async()=>{
+  if(!document.hidden){
+    await keepAwakeEnable();
+    if(!audioReady){ await startAudioGraph(); }
+    await resumeAudio();
+  }else{
+    await keepAwakeDisable();
+    await stopAudioGraph();
+    stopMetronome();
+  }
+});
+
+/* ===== ピッチ処理 ===== */
+function centsDiff(f_est,f_tgt){ return 1200*Math.log2(f_est/f_tgt); }
+function scoreFromCents(absC){ const c=Math.min(200,Math.max(0,absC)); return Math.round(100*(1-c/200)); }
+
+function onWorkletMessage(ev){
+  const {f0, conf, rms, now} = ev.data || {};
+  const tNow = now || performance.now();
+
+  // 常時ニードル
+  if(scaleData){
+    const n=scaleData.noteObjs[Math.min(idx, scaleData.noteObjs.length-1)];
+    const fTarget=letterFreq(n.letter,n.octave,scaleData.keySignature,A4_REF_HZ);
+    if(f0){ updateNeedle(centsDiff(f0,fTarget)); }
+  }
+
+  if(!sessionRunning) return;
+
+  if(rms < LEVEL_RMS_THRESHOLD){ adviceEl.className="bad"; adviceEl.textContent='入力が小さいです。'; return; }
+  if(!f0 || conf<0.30){ adviceEl.className="warn"; adviceEl.textContent='検出が不安定…'; return; } // conf閾値を下げてF#取りこぼしを回避
+
+  lastValidTime = tNow;
+
+  const cur=scaleData.noteObjs[idx];
+  const fTarget=letterFreq(cur.letter,cur.octave,scaleData.keySignature,A4_REF_HZ);
+  const cents=centsDiff(f0,fTarget);
+  const absC=Math.abs(cents);
+  const sc=scoreFromCents(absC);
+
+  setAdviceThrottled(cents, sc);
+  colorMini(absC);
+  progEl.textContent=`音 ${idx+1}/${scaleData.noteObjs.length}`;
+
+  if(absC > PASS_BAND_CENTS) mustExitPassBand=false;
+  const inPassBand = absC <= PASS_BAND_CENTS;
+
+  if(sc >= passThreshold && inPassBand && !mustExitPassBand){
+    if(tNow - lastAdvanceTime < COOLDOWN_NEXT_MS) return;
+    if(scores[idx] == null) scores[idx] = sc;
+
+    idx++;
+    lastProgressTime = tNow;
+    lastAdvanceTime = tNow;
+    mustExitPassBand = true;
+
+    if(idx >= scaleData.noteObjs.length){ finishScale(); return; }
+    highlightIndex(renderCtx, idx);
+  }
 }
 
-/* ========== セッション制御（開始/停止） ========== */
+/* ===== セッション ===== */
 function startSession(){
-  if(!audioReady){ notify('マイクを初期化中です。しばらくお待ちください。','info',2000); return; }
-  if(tunerOn){ notify('チューナーON中は練習を開始できません。チューナーをOFFにしてください。','warn',3000); return; }
-  sessionRunning=true; btnStart.disabled=true; btnStop.disabled=false;
+  if(!audioReady){ notify('マイク初期化中です。画面をタップして有効化してください。','info',2500); resumeAudio(); return; }
+  sessionRunning=true; document.body.classList.add('running');
+  btnStart.disabled=true; btnStop.disabled=false;
   passThreshold=+passSel.value;
-  inScale=true;
+  LEVEL_RMS_THRESHOLD = +rmsInput.value;
+
   try{
     scaleData=buildMajorScale(currentKey);
-    renderCtx=renderScale(scaleData.keySignature, scaleData.vexKeys);
-    idx=0; firstScores=Array(scaleData.vexKeys.length).fill(null);
-    highlightIndex(renderCtx,0,1);
+    renderCtx=renderScale(scaleData.keySignature, scaleData.vexKeys, scaleData.noteObjs);
+    idx=0; scores=[]; lastProgressTime=performance.now(); lastValidTime=0; lastAdvanceTime=0; mustExitPassBand=true;
+    highlightIndex(renderCtx,0);
     startMetronome();
-  }catch(e){ pushError(e); notify('五線譜の描画に失敗しました（エラー情報を確認）','error',4000); }
+  }catch(e){ pushError(e); notify('五線譜の描画に失敗（エラー情報を確認）','error',4000); }
 }
 function stopSession(){
-  sessionRunning=false; btnStart.disabled=false; btnStop.disabled=true;
+  sessionRunning=false; document.body.classList.remove('running');
+  btnStart.disabled=false; btnStop.disabled=true;
   stopMetronome();
-  bigScoreEl.textContent="--"; bigScoreEl.className=""; feedbackEl.textContent="停止中";
+  miniScoreEl.textContent="—"; miniScoreEl.className="";
+  adviceEl.className=""; adviceEl.textContent="停止中";
+  bigScoreEl.textContent="—";
+  progEl.textContent=`音 1/32`;
+}
+function finishScale(){
+  stopMetronome();
+  const passedScores = scores.filter(s=>typeof s==='number');
+  const avg = passedScores.length ? Math.round(passedScores.reduce((a,b)=>a+b,0)/passedScores.length) : 0;
+
+  const resultEl=document.getElementById('result');
+  const praiseEl=document.getElementById('praise');
+  const detailsEl=document.getElementById('details');
+
+  if(avg>=98) praiseEl.textContent="神懸りの安定感。舞台いけます。";
+  else if(avg>=95) praiseEl.textContent="プロの精度。美しい。";
+  else if(avg>=90) praiseEl.textContent="とても良い音程です！";
+  else praiseEl.textContent="確実に上がっています。継続しましょう。";
+
+  detailsEl.textContent = `合格時スコア平均：${avg} 点（${passedScores.length} / ${scaleData.noteObjs.length} 音）`;
+  resultEl.classList.add('show'); resultEl.setAttribute('aria-hidden','false');
+  document.getElementById('again').onclick=()=>{ resultEl.classList.remove('show'); resultEl.setAttribute('aria-hidden','true'); startSession(); };
+  document.getElementById('close').onclick=()=>{ resultEl.classList.remove('show'); resultEl.setAttribute('aria-hidden','true'); };
+  stopSession();
 }
 
-/* ========== UIイベント ========== */
-btnStart.addEventListener('click', startSession);
-btnStop.addEventListener('click', stopSession);
-passSel.addEventListener('change', ()=>{ passThreshold=+passSel.value; notify(`合格閾値: ${passThreshold} 点`,'info',1200,true); });
-
-bpmInput.addEventListener('change', ()=>{
-  const v=Math.max(40,Math.min(200, Math.round((+bpmInput.value)/5)*5));
-  bpmInput.value=String(v); startMetronome();
-});
-metroToggle.addEventListener('change', ()=>{ metroOn=metroToggle.checked; startMetronome(); });
-
-tunerBtn.addEventListener('click', ()=>{
-  tunerOn=!tunerOn;
-  tunerBtn.textContent=tunerOn? "チューナー停止":"チューナー";
-  keySelect.disabled=tunerOn;
-  if(tunerOn){ try{ renderTunerStaff(); }catch(e){ pushError(e); } stopSession(); }
-  else { try{ scaleData=buildMajorScale(currentKey); renderCtx=renderScale(scaleData.keySignature, scaleData.vexKeys); highlightIndex(renderCtx,0,1); }catch(e){ pushError(e); } }
-});
-
-/* “オプションなし”対策：静的に入っているか検証し、無ければ再挿入 */
-(function ensureKeyOptions(){
-  const values = new Set(Array.from(keySelect.options).map(o=>o.value));
-  const need = ALL_KEYS.filter(k=>!values.has(k));
-  if(need.length){
-    need.forEach(k=>{ const o=document.createElement('option'); o.value=k; o.textContent=k; keySelect.appendChild(o); });
-  }
-  // value 不正なら G をデフォルト
-  if(!values.has(keySelect.value)) keySelect.value="G";
+/* ===== UI ===== */
+(function fillPass(){
+  const sel=passSel; sel.innerHTML="";
+  for(let p=85;p<=100;p++){ const op=document.createElement('option'); op.textContent=String(p); sel.appendChild(op); }
+  sel.value="90";
 })();
+bpmInput.addEventListener('change', ()=>{ const v=Math.max(40,Math.min(200, Math.round((+bpmInput.value)/5)*5)); bpmInput.value=String(v); startMetronome(); });
+metroToggle.addEventListener('change', ()=>{ metroOn=metroToggle.checked; startMetronome(); });
+rmsInput.addEventListener('change', ()=>{ const v=Math.max(0.001,Math.min(0.02, +rmsInput.value)); rmsInput.value=String(v.toFixed(3)); notify(`音量閾値(RMS): ${rmsInput.value}`,'info',1200,true); });
 
 keySelect.addEventListener('change', ()=>{
   currentKey=keySelect.value;
-  if(!sessionRunning && !tunerOn){
+  if(!sessionRunning){
     try{
       scaleData=buildMajorScale(currentKey);
-      renderCtx=renderScale(scaleData.keySignature, scaleData.vexKeys);
-      highlightIndex(renderCtx,0,1);
+      renderCtx=renderScale(scaleData.keySignature, scaleData.vexKeys, scaleData.noteObjs);
+      highlightIndex(renderCtx,0);
     }catch(e){ pushError(e); }
   }
 });
+btnStart.addEventListener('click', ()=>{ resumeAudio(); startSession(); });
+btnStop.addEventListener('click', stopSession);
 
-window.addEventListener('resize', ()=>{
-  try{
-    if(tunerOn) renderTunerStaff();
-    else if(scaleData){ renderCtx=renderScale(scaleData.keySignature, scaleData.vexKeys); highlightIndex(renderCtx,Math.min(idx,scaleData.vexKeys.length-1),Math.min(idx+1,scaleData.vexKeys.length-1)); }
-  }catch(e){ pushError(e); }
-});
-
-/* ========== 初期化：VexFlowロード→五線譜描画→マイク常時ON ========== */
+/* ===== 初期化 ===== */
 (async function init(){
+  keepAwakeEnable();
+  try{ await ensureVexFlow(); }catch{}
   try{
-    await ensureVexFlow();
-    // 初期表示：スケール（G）
-    scaleData=buildMajorScale(currentKey);
-    renderCtx=renderScale(scaleData.keySignature, scaleData.vexKeys);
-    highlightIndex(renderCtx,0,1);
-  }catch(e){ pushError(e); notify('VexFlowの読み込みに失敗しました。ネットワークやコンテンツブロッカーを確認してください。','error',6000); }
-  await startEngine(); // マイクは常時
-  requestWakeLock();   // スリープ防止
+    currentKey="G"; scaleData=buildMajorScale(currentKey);
+    renderCtx=renderScale(scaleData.keySignature, scaleData.vexKeys, scaleData.noteObjs);
+    highlightIndex(renderCtx,0);
+  }catch(e){ pushError(e); }
+  if(!document.hidden){ await startAudioGraph(); await resumeAudio(); }
 })();
