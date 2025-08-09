@@ -13,10 +13,9 @@ function line(svg,x1,y1,x2,y2,stroke="#e8eef7",w=1){ const ns="http://www.w3.org
 function notehead(svg,x,y,fill="#e8eef7",rX=5.8,rY=4.2,rot=-20){ const ns="http://www.w3.org/2000/svg"; const e=document.createElementNS(ns,"ellipse"); e.setAttribute("cx",x); e.setAttribute("cy",y); e.setAttribute("rx",rX); e.setAttribute("ry",rY); e.setAttribute("fill",fill); e.setAttribute("transform",`rotate(${rot},${x},${y})`); svg.appendChild(e); return e; }
 function stem(svg,x,yUp,len=18,stroke="#e8eef7"){ return line(svg,x+7,yUp, x+7, yUp-len, stroke, 1.6); }
 
-let fbState = null;
-let VFCache = null;
+let fbState=null;
+let VFCache=null;
 
-/* ==== 調号（フォールバック） ==== */
 function renderKeySignature(svg, key, left, staffTop, space){
   const sig = KEY_SIG[key] || KEY_SIG["C"];
   if(!sig.sharps.length && !sig.flats.length) return 0;
@@ -32,78 +31,55 @@ function renderKeySignature(svg, key, left, staffTop, space){
   return x-left;
 }
 
-/* ==== 加線 ==== */
 function drawLedgerLines(svg, xi, yi, top, bottom, space, color="#a7c7dd"){
   const short=16, w=1.2;
-  // 上に飛び出す
-  for(let y=top-space; y>=yi-1; y-=space){
-    line(svg, xi-short/2, y, xi+short/2, y, color, w);
-  }
-  // 下に飛び出す
-  for(let y=bottom+space; y<=yi+1; y+=space){
-    line(svg, xi-short/2, y, xi+short/2, y, color, w);
-  }
+  for(let y=top-space; y>=yi-1; y-=space){ line(svg, xi-short/2, y, xi+short/2, y, color, w); }
+  for(let y=bottom+space; y<=yi+1; y+=space){ line(svg, xi-short/2, y, xi+short/2, y, color, w); }
 }
 
-/* ==== フォールバック（SVG） 2段描画 ==== */
 function renderFallbackScaleTwoSystems(key, noteObjs, highlightIdx=0){
+  const staffDiv = document.getElementById('staff');
   staffDiv.innerHTML="";
   const w=staffDiv.clientWidth||720, h=420; const svg=mkSvg(w,h); staffDiv.appendChild(svg);
 
-  const systems = [
-    {top:30, left:12, right:w-12, notes: noteObjs.slice(0,16)},
-    {top:230, left:12, right:w-12, notes: noteObjs.slice(16,32)}
-  ];
+  const systems=[{top:30,left:12,right:w-12,notes:noteObjs.slice(0,16)},
+                 {top:230,left:12,right:w-12,notes:noteObjs.slice(16,32)}];
   const nodes=[];
 
-  systems.forEach((sys, sIdx)=>{
-    const {top,left,right,notes} = sys;
+  systems.forEach((sys,sIdx)=>{
+    const {top,left,right,notes}=sys;
     const space=14, bottom=top+space*4;
-
-    // 五線
     for(let i=0;i<5;i++) line(svg,left, top+space*i, right, top+space*i, "#e8eef7", 1.2);
 
-    // 調号（4/4は表示しない）
     const ksW = renderKeySignature(svg, key, left+22, top, space);
     const innerLeft = left+22+ksW+8, innerRight = right-8;
-
     const stepX = (innerRight-innerLeft)/Math.max(1, notes.length);
     const yFor=(L,O)=>{ const seq=["C","D","E","F","G","A","B"]; const idx=(l)=>seq.indexOf(l); const s=(O-4)*7 + (idx(L)-idx("E")); return bottom - (s*space/2); };
 
     notes.forEach((n,i)=>{
-      const xi = innerLeft + stepX*(i+0.5);
-      const yi = yFor(n.letter, n.octave);
-      const gi = sIdx*16 + i;
-      const color = (gi===highlightIdx) ? "#22c55e" : "#e8eef7";
-      // 加線
-      if(yi < top || yi > bottom) drawLedgerLines(svg, xi, yi, top, bottom, space, color);
-      const head=notehead(svg, xi, yi, color); const stm=stem(svg, xi, yi-3, 20, color);
-      nodes[gi] = {head:head, stem:stm};
+      const xi=innerLeft+stepX*(i+0.5), yi=yFor(n.letter,n.octave);
+      const gi=sIdx*16+i; const color=(gi===highlightIdx)?"#22c55e":"#e8eef7";
+      if(yi<top||yi>bottom) drawLedgerLines(svg,xi,yi,top,bottom,space,color);
+      const head=notehead(svg,xi,yi,color); const stm=stem(svg,xi,yi-3,20,color);
+      nodes[gi]={head,stem};
       if((i+1)%8===0 && i<notes.length-1){ const bx=innerLeft+stepX*(i+1); line(svg,bx,top,bx,bottom,"#7aa2c1",1.2); }
     });
   });
 
-  fbState={key, noteObjs, svg, nodes};
-  VFCache=null;
+  fbState={key, noteObjs, svg, nodes}; VFCache=null;
   return {renderer:null, stave:null, notes:[], nodes};
 }
 
-/* ==== VexFlow ==== */
 export function renderScale(keySignature, vexKeys, noteObjs=null){
-  const VF = window.Vex?.Flow;
+  const VF=window.Vex?.Flow;
   if(VF){
+    const staffDiv = document.getElementById('staff');
     staffDiv.innerHTML="";
     const renderer = new VF.Renderer(staffDiv, VF.Renderer.Backends.SVG);
     const w=staffDiv.clientWidth||720, h=420; renderer.resize(w,h);
-    const ctx = renderer.getContext();
-
-    const stave1 = new VF.Stave(10,20,w-20);
-    stave1.addKeySignature(keySignature);
-    stave1.setContext(ctx).draw();
-
-    const stave2 = new VF.Stave(10,220,w-20);
-    stave2.addKeySignature(keySignature);
-    stave2.setContext(ctx).draw();
+    const ctx=renderer.getContext();
+    const stave1=new VF.Stave(10,20,w-20); stave1.addKeySignature(keySignature); stave1.setContext(ctx).draw();
+    const stave2=new VF.Stave(10,220,w-20); stave2.addKeySignature(keySignature); stave2.setContext(ctx).draw();
 
     const keys1=vexKeys.slice(0,16), keys2=vexKeys.slice(16,32);
     const makeNotes=(keys)=>keys.map(k=>new VF.StaveNote({keys:[k],duration:"8",clef:"treble"}));
@@ -115,8 +91,7 @@ export function renderScale(keySignature, vexKeys, noteObjs=null){
     voice1.draw(ctx,stave1); voice2.draw(ctx,stave2);
 
     VFCache={renderer, ctx, stave1, stave2, notes:[...notes1,...notes2]};
-    fbState=null;
-    highlightIndex(VFCache, 0);
+    fbState=null; highlightIndex(VFCache,0);
     return VFCache;
   }else{
     const objs = noteObjs || (vexKeys||[]).map(vk=>{ const m=vk.match(/^([A-G])\/(\d)$/); return {letter:m?m[1]:"A", octave:m?+m[2]:4}; });
@@ -125,18 +100,15 @@ export function renderScale(keySignature, vexKeys, noteObjs=null){
 }
 
 export function highlightIndex(renderCtx, idx){
-  const VF = window.Vex?.Flow;
+  const VF=window.Vex?.Flow;
   if(VF && (VFCache||renderCtx)?.notes?.length){
-    const cache = VFCache || renderCtx;
+    const cache=VFCache||renderCtx;
     const {renderer, stave1, stave2} = cache;
+    const staffDiv = document.getElementById('staff');
     const w=staffDiv.clientWidth||720, h=420; renderer.resize(w,h);
-    const ctx = renderer.getContext(); ctx.clear(); stave1.setContext(ctx).draw(); stave2.setContext(ctx).draw();
+    const ctx=renderer.getContext(); ctx.clear(); stave1.setContext(ctx).draw(); stave2.setContext(ctx).draw();
 
-    const notes = cache.notes.map((sn,i)=>{
-      const color = (i===idx) ? "#22c55e" : "#e8eef7";
-      sn.setStyle({fillStyle:color, strokeStyle:color});
-      return sn;
-    });
+    const notes=cache.notes.map((sn,i)=>{ const color=(i===idx)?"#22c55e":"#e8eef7"; sn.setStyle({fillStyle:color, strokeStyle:color}); return sn; });
     const voice1=new window.Vex.Flow.Voice({num_beats:16,beat_value:4}).setMode(window.Vex.Flow.Voice.Mode.SOFT).addTickables(notes.slice(0,16));
     const voice2=new window.Vex.Flow.Voice({num_beats:16,beat_value:4}).setMode(window.Vex.Flow.Voice.Mode.SOFT).addTickables(notes.slice(16,32));
     new window.Vex.Flow.Formatter().joinVoices([voice1]).format([voice1], w-40);

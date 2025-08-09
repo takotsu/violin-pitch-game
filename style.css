@@ -1,19 +1,16 @@
+/* 省略せず全量。v16と同じ内容 */
 :root{ --bg:#0b0d12; --fg:#e8eef7; --accent:#2dd4bf;
   --warn:#d97706; --err:#b91c1c; --info:#374151;
   --good:#10b981; --mid:#f59e0b; --bad:#ef4444;}
 *{box-sizing:border-box}
 html,body{margin:0;padding:0;background:var(--bg);color:var(--fg);
   font-family:system-ui,-apple-system,"Segoe UI",Roboto,"Hiragino Kaku Gothic ProN","Yu Gothic",sans-serif}
-
-/* 上部バー */
 #topbar{position:fixed;left:0;right:0;top:0;height:32px;display:flex;align-items:center;justify-content:space-between;
   padding:0 12px;background:#0f131a;border-bottom:1px solid #1f2937;z-index:10000}
 #mini-score{font-size:16px;font-weight:800}
 #mini-score.green{color:var(--good)} #mini-score.yellow{color:var(--mid)} #mini-score.red{color:var(--bad)}
 .version{font-size:11px;opacity:.8}
-
 main{padding:44px 12px 12px;max-width:760px;margin:0 auto}
-
 #controls{max-width:760px;margin:42px auto 0;display:grid;gap:8px;padding:0 12px}
 #controls .row{display:flex;gap:8px;align-items:end;flex-wrap:wrap}
 #controls label{display:block;font-size:14px;flex:1;min-width:140px}
@@ -25,8 +22,6 @@ body.running #start{background:#10b981}
 #metro{display:flex;align-items:center;gap:10px}
 #metro-led{display:inline-block;width:10px;height:10px;border-radius:50%;background:#334155}
 .switch{display:flex;align-items:center;gap:6px}
-
-/* 助言＋点数（五線譜のすぐ上・右） */
 #score-area{position:relative;background:#0f131a;border:1px solid #1f2937;border-radius:8px;padding:6px;margin:6px auto 0}
 #advice{position:absolute;left:12px;top:8px;font-size:24px;font-weight:900;
   color:#e6faff;text-shadow:0 0 10px rgba(45,212,191,.35), 0 0 20px rgba(45,212,191,.2)}
@@ -34,18 +29,14 @@ body.running #start{background:#10b981}
 #advice.warn{color:#ffe1a6;text-shadow:0 0 14px rgba(245,158,11,.5)}
 #advice.bad{ color:#ffb3b3;text-shadow:0 0 14px rgba(239,68,68,.5)}
 #big-score{position:absolute;right:14px;top:6px;font-size:28px;font-weight:900;color:#d1e8ff}
-
 #staff-wrap{position:relative;width:100%;height:420px;margin-top:28px}
 #staff{position:absolute;inset:0}
-
 #score-panel{text-align:center;padding:8px 0}
 #cents-scale{display:flex;justify-content:space-between;font-size:12px;color:#9ca3af;margin-bottom:6px}
 #cents-bar{position:relative;height:10px;background:#111827;border:1px solid #1f2937;border-radius:999px;overflow:hidden}
 #cents-bar::before{content:"";position:absolute;top:0;bottom:0;width:1px;background:#334155;left:50%}
 #needle{position:absolute;top:-6px;width:2px;height:22px;background:var(--accent);left:50%}
 #prog{margin-top:6px;font-size:13px;opacity:.9}
-
-/* トースト／モーダル */
 #toast{position:fixed;left:0;right:0;bottom:0;padding:10px 12px;font-size:13px;text-align:center;
   background:rgba(40,40,40,.95);color:#fff;transform:translateY(100%);transition:transform .25s ease;z-index:9999}
 #toast.show{transform:translateY(0)}
