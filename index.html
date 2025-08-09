@@ -5,18 +5,14 @@
   <title>Violin Pitch Game (A=442Hz)</title>
   <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover" />
   <link rel="stylesheet" href="./style.css" />
-  <!-- ※ VexFlow は app.js 内でフォールバック付き動的ロードします -->
 </head>
 <body>
-  <header>
-    <h1>Violin Pitch Game (A=442Hz)</h1>
-    <span id="app-version" class="version">v8</span>
-  </header>
+  <!-- 右上バージョンのみ -->
+  <span id="app-version" class="version">v11</span>
 
   <section id="controls">
     <div class="row">
       <label>スケールの調:
-        <!-- 静的オプションを必ず置く（“オプションなし”回避）。JSでも検証・補強する -->
         <select id="key-select">
           <option>G</option><option>D</option><option>A</option><option>E</option>
           <option>C</option><option>F</option><option>Bb</option><option>Eb</option>
@@ -39,7 +35,6 @@
           <span>メトロノーム</span>
         </label>
         <span id="metro-led" aria-hidden="true"></span>
-        <button id="tunerBtn" class="tuner" title="既製チューナーモードのON/OFF">チューナー</button>
       </div>
     </div>
 
@@ -71,12 +66,21 @@
       <div id="cents-bar"><div id="needle"></div></div>
     </section>
 
+    <!-- 常時：左→右スイープのボイスメモ風波形（プレイヘッド付き） -->
     <section id="osc-area">
       <canvas id="osc"></canvas>
     </section>
   </main>
 
-  <!-- 結果モーダル -->
+  <!-- 回転促し（縦向き時のブロッカー） -->
+  <div id="rotate-overlay" aria-hidden="true">
+    <div class="card">
+      <p>横向きでご利用ください。</p>
+      <button id="try-lock">横向きにする</button>
+    </div>
+  </div>
+
+  <!-- 結果 -->
   <div id="result" aria-hidden="true">
     <canvas id="confetti"></canvas>
     <div class="card">
@@ -91,7 +95,7 @@
     </div>
   </div>
 
-  <!-- エラー一覧ポップアップ -->
+  <!-- エラー一覧 -->
   <div id="error-modal" aria-hidden="true">
     <div class="card">
       <h2>エラー情報</h2>
@@ -105,7 +109,6 @@
 
   <div id="toast" aria-live="polite" aria-atomic="true"></div>
 
-  <!-- アプリ（VexFlowは app.js 内でロード） -->
   <script type="module" src="./scales.js"></script>
   <script type="module" src="./score.js"></script>
   <script type="module" src="./app.js"></script>
