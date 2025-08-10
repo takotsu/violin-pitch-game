@@ -1,335 +1,222 @@
-import { ALL_KEYS, buildMajorScale, letterFreq } from "./scales.js";
-import { renderScale, highlightIndex } from "./score.js";
+// app.js（全面差し替え）
+// 442Hzに厳密化／バックグラウンド強制停止／二小節→次二小節／許可は可視時のみ。
 
-/* ===== エラーログ ===== */
-const errorLog = [];
-function pushError(e){
-  const msg = (e?.message||e)?.toString();
-  const stack = e?.error?.stack || e?.stack || "";
-  const entry = `${new Date().toLocaleString()} : ${msg}\n${stack}`;
-  errorLog.push(entry); renderErrorModal();
-}
-window.addEventListener('error',(ev)=>{ pushError(ev); notify('エラーが発生（詳細を見るをタップ）','error',3500); showErrorModal(); });
-window.addEventListener('unhandledrejection',(ev)=>{ pushError(ev.reason||ev); notify('エラーが発生（詳細を見るをタップ）','error',3500); showErrorModal(); });
-function renderErrorModal(){ const list=document.getElementById('error-list'); if(!list) return; list.innerHTML=""; errorLog.slice(-50).forEach(t=>{ const li=document.createElement('li'); li.textContent=t; list.appendChild(li); }); }
-function showErrorModal(){ const m=document.getElementById('error-modal'); m.classList.add('show'); m.setAttribute('aria-hidden','false'); }
-function hideErrorModal(){ const m=document.getElementById('error-modal'); m.classList.remove('show'); m.setAttribute('aria-hidden','true'); }
-document.getElementById('err-close').onclick=hideErrorModal;
-document.getElementById('err-copy').onclick=async()=>{ await navigator.clipboard.writeText(errorLog.join('\n\n')); notify('エラー内容をコピーしました。','info',2000); };
+import { makeExercise4Bars, letterFreq } from "./scales.js";
+import { renderTwoBars } from "./score.js";
 
-/* ===== 通知 ===== */
-let toastTimer;
-function notify(msg, level='warn', ms=2500, tiny=false){
-  const el=document.getElementById('toast');
-  el.className=`${level} ${tiny?'tiny':''} show`; el.textContent=msg;
-  clearTimeout(toastTimer); toastTimer=setTimeout(()=>el.className=el.className.replace('show',''), ms);
-}
+const selKey=document.getElementById("key-select");
+const selPass=document.getElementById("pass");
+const inpRMS=document.getElementById("rms");
+const inpDbCal=document.getElementById("dbCal");
+const btnStart=document.getElementById("start");
+const btnStop=document.getElementById("stop");
+const advice=document.getElementById("advice");
+const bigScore=document.getElementById("big-score");
+const prog=document.getElementById("prog");
+const micdb=document.getElementById("micdb");
+const gate=document.getElementById("mic-gate");
+const permit=document.getElementById("permit");
+const ticksGroup=document.getElementById("ticks");
+const needleSvg=document.getElementById("needle");
+const noteText=document.getElementById("noteText");
+const octText=document.getElementById("octText");
+const hzText=document.getElementById("hzText");
+const centText=document.getElementById("centText");
+const needleBar=document.getElementById("needleBar");
+const fx=document.getElementById("fx");
+const errList=document.getElementById("error-list");
+const errCopy=document.getElementById("err-copy");
 
-/* ===== Wake Lock ===== */
-let wakeLock=null;
-async function requestWakeLock(){ try{ if('wakeLock' in navigator){ wakeLock=await navigator.wakeLock.request('screen'); } }catch{} }
-document.addEventListener('visibilitychange', async()=>{ if(!document.hidden){ requestWakeLock(); resumeAudio(); } });
+const errors=new Set();
+function pushErr(e){ const msg=typeof e==="string"?e:(e?.message||String(e)); const item=`${new Date().toISOString()} : ${msg}`; if(errors.has(item)) return; errors.add(item); const li=document.createElement("li"); li.textContent=item; errList.appendChild(li); console.error(item); }
 
-/* ===== VexFlow（失敗しても続行） ===== */
-async function ensureVexFlow(){
-  if(window.Vex && window.Vex.Flow) return true;
-  const cdns = [
-    "https://cdn.jsdelivr.net/npm/vexflow@3.0.9/build/vexflow-min.js",
-    "https://unpkg.com/vexflow@3.0.9/build/vexflow-min.js"
-  ];
-  for(const url of cdns){
-    try{ await loadScript(url, 7000); if(window.Vex && window.Vex.Flow) return true; }
-    catch(e){ pushError(new Error(`VexFlow load fail: ${url}`)); }
-  }
-  pushError(new Error("VexFlowをCDNから読み込めませんでした。フォールバック描画に切替。"));
-  return false;
-}
-function loadScript(src, timeoutMs=7000){
-  return new Promise((res,rej)=>{
-    const s=document.createElement('script'); s.src=src; s.crossOrigin="anonymous"; s.referrerPolicy="no-referrer";
-    const to=setTimeout(()=>{ s.remove(); rej(new Error("timeout")); }, timeoutMs);
-    s.onload=()=>{ clearTimeout(to); res(); };
-    s.onerror=()=>{ clearTimeout(to); rej(new Error("onerror")); };
-    document.head.appendChild(s);
-  });
-}
+// 針目盛（5c刻み／10c中／25c長）
+(function(){ const cx=210,cy=140,r=95; const ang=c=>(-50+c)/100*(Math.PI*1.2)-Math.PI*0.6;
+  for(let c=-50;c<=50;c+=5){ const a=ang(c), long=c%25===0, mid=c%10===0; const inner=r-(long?20:mid?14:9);
+    const l=document.createElementNS("http://www.w3.org/2000/svg","line");
+    l.setAttribute("x1",cx+inner*Math.sin(a)); l.setAttribute("y1",cy-inner*Math.cos(a));
+    l.setAttribute("x2",cx+r*Math.sin(a));     l.setAttribute("y2",cy-r*Math.cos(a));
+    l.setAttribute("stroke", c===0? "#8fd1ff":"#d7e6f3"); l.setAttribute("opacity", (!mid)?0.55:0.9); l.setAttribute("stroke-width", long?2:1);
+    ticksGroup?.appendChild(l);
+  }})();
 
-/* ===== 基本ユーティリティ ===== */
-const A4_REF_HZ=442;
-function centsDiff(f_est,f_tgt){ return 1200*Math.log2(f_est/f_tgt); }
-function scoreFromCents(absC){ const c=Math.min(200,Math.max(0,absC)); return Math.round(100*(1-c/200)); }
+// 合格閾値
+for(let p=85;p<=100;p++){ const o=document.createElement("option"); o.textContent=p; selPass.appendChild(o); }
+selPass.value="90";
 
-/* ===== UI refs ===== */
-const bigScoreEl=document.getElementById('big-score');
-const feedbackEl=document.getElementById('feedback');
-const needleEl=document.getElementById('needle');
-const passSel=document.getElementById('pass');
-const btnStart=document.getElementById('start');
-const btnStop=document.getElementById('stop');
-const bpmInput=document.getElementById('bpm');
-const metroLed=document.getElementById('metro-led');
-const metroToggle=document.getElementById('metroToggle');
-const keySelect=document.getElementById('key-select');
-const karaokeCanvas=document.getElementById('karaoke');
-const oscCanvas=document.getElementById('osc');
+// 状態
+let audio, analyser, aHP,aPeak, srcNode, mediaStream;
+let rafId=null, running=false;
+let session=null; // {key, all[32], pass, blockIdx, noteIdx, ctx}
+let advanceLockUntil=0;
 
-/* ===== 状態 ===== */
-let renderCtx=null;
-let currentKey="G";
-function colorScore(s){ bigScoreEl.className=""; if(s>=90) bigScoreEl.classList.add('green'); else if(s>=70) bigScoreEl.classList.add('yellow'); else bigScoreEl.classList.add('red');}
-function updateNeedle(c){ const clamped=Math.max(-50,Math.min(50,c)); const pct=(clamped+50)/100; needleEl.style.left=`calc(${pct*100}% - 1px)`; }
-
-/* ===== Audio（常時：iOS対策で確実にresume） ===== */
-let ac, workletNode, mic, analyser, mediaStream=null;
-let audioReady=false;
-let lowLevelSince=0, lastPitchWarn=0;
-const LEVEL_RMS_THRESHOLD = 0.02;
-
-async function resumeAudio(){
+// Audio
+async function ensureAudio(){ if(!audio){ try{ audio=new (window.AudioContext||window.webkitAudioContext)({latencyHint:"interactive"}); if(audio.state==="suspended") await audio.resume(); }catch(e){ pushErr(e); } } }
+async function openMic(){
+  if(document.visibilityState!=="visible"){ pushErr("非表示中はマイク許可しません"); return false; }
+  await ensureAudio();
   try{
-    if(ac && ac.state!=='running'){
-      await ac.resume();
-      notify('オーディオを再開しました。','info',1200,true);
-    }
-  }catch(e){ pushError(e); }
+    mediaStream = await navigator.mediaDevices.getUserMedia({ audio:{ echoCancellation:false, noiseSuppression:false, autoGainControl:false, channelCount:1 } });
+  }catch(e){ pushErr("マイク未許可/未接続"); return false; }
+  gate.setAttribute("aria-hidden","true");
+  srcNode = audio.createMediaStreamSource(mediaStream);
+  aHP = audio.createBiquadFilter(); aHP.type="highpass"; aHP.frequency.value=90; aHP.Q.value=0.7;
+  aPeak = audio.createBiquadFilter(); aPeak.type="peaking"; aPeak.frequency.value=2500; aPeak.Q.value=1.0; aPeak.gain.value=5;
+  analyser = audio.createAnalyser(); analyser.fftSize=4096; analyser.smoothingTimeConstant=0.06;
+  srcNode.connect(aHP).connect(aPeak).connect(analyser);
+  try{ document.getElementById("nosleep").play().catch(()=>{});}catch{}
+  return true;
+}
+function suspendAll(reason){
+  running=false; if(rafId) cancelAnimationFrame(rafId);
+  btnStart.disabled=false; btnStop.disabled=true;
+  try{ audio?.suspend?.(); }catch{}
+  try{ mediaStream?.getTracks().forEach(t=>t.stop()); }catch(e){ pushErr(e); }
+  mediaStream=null; analyser=srcNode=aHP=aPeak=undefined;
+}
+window.addEventListener("visibilitychange",()=>{ if(document.visibilityState!=="visible") suspendAll("hidden"); });
+window.addEventListener("pagehide",()=>suspendAll("pagehide"));
+window.addEventListener("blur",()=>{ if(document.visibilityState!=="visible") suspendAll("blur"); });
+// 念のための監視（iOSで稀に hidden を取りこぼすことがある）
+setInterval(()=>{ if((document.visibilityState!=="visible" || !document.hasFocus()) && mediaStream){ suspendAll("watchdog"); } }, 1500);
+
+// 検出（自己相関＋放物線）
+const winBuf=new Float32Array(8192), acBuf=new Float32Array(8192);
+function detectPitch(){
+  if(!analyser) return {freq:0,rms:0,db:0};
+  const N=Math.min(analyser.fftSize,4096);
+  const time=new Float32Array(N);
+  try{ analyser.getFloatTimeDomainData(time); }catch(e){ pushErr(e); return {freq:0,rms:0,db:0}; }
+  // RMS→dB
+  let rms=0; for(let i=0;i<N;i++) rms+=time[i]*time[i]; rms=Math.sqrt(rms/N);
+  const db=Math.max(0,Math.min(120,Math.round(20*Math.log10(Math.max(rms,1e-9))+94+(parseFloat(inpDbCal.value)||0))));
+  micdb.textContent=`${db} dB`; micdb.style.color=(db>=80)?"#ff3b30":(db>=70)?"#ff9f0a":(db>=40)?"#34c759":"#8fb3cc";
+  if(rms < parseFloat(inpRMS.value||"0.0015")) return {freq:0,rms,db};
+  // ハミング窓
+  for(let i=0;i<N;i++){ const w=0.54-0.46*Math.cos(2*Math.PI*i/(N-1)); winBuf[i]=time[i]*w; }
+  const sr=audio.sampleRate, fMin=110, fMax=2200; const minLag=Math.floor(sr/fMax), maxLag=Math.floor(sr/fMin);
+  let bestLag=-1,best=0; for(let lag=minLag; lag<=maxLag; lag++){ let s=0; for(let i=0;i<N-lag;i++) s+=winBuf[i]*winBuf[i+lag]; acBuf[lag]=s; if(s>best){best=s;bestLag=lag;} }
+  if(bestLag<0) return {freq:0,rms,db};
+  const y1=acBuf[bestLag-1]||0, y2=acBuf[bestLag]||0, y3=acBuf[bestLag+1]||0; const p=0.5*(y1-y3)/(y1-2*y2+y3);
+  const lag=bestLag+(isFinite(p)?p:0);
+  return {freq: sr/lag, rms, db};
 }
 
-/* ===== スケール進行 ===== */
-let sessionRunning=false, inScale=false;
-let scaleData=null;
-let idx=0, firstScores=[], passThreshold=90;
-
-/* ===== メトロノーム（要素オーディオ） ===== */
-let metroTimer=null, metroOn=false;
-let strongPool=[], weakPool=[], poolIdxS=0, poolIdxW=0;
-function makeBeepUrl(freq=1500, durMs=100, sr=44100){
-  const len=Math.floor(sr*durMs/1000), wavLen=44+len*2;
-  const buf=new ArrayBuffer(wavLen); const dv=new DataView(buf);
-  const wrStr=(o,s)=>{ for(let i=0;i<s.length;i++) dv.setUint8(o+i,s.charCodeAt(i)); };
-  wrStr(0,"RIFF"); dv.setUint32(4,wavLen-8,true); wrStr(8,"WAVE"); wrStr(12,"fmt "); dv.setUint32(16,16,true);
-  dv.setUint16(20,1,true); dv.setUint16(22,1,true); dv.setUint32(24,sr,true); dv.setUint32(28,sr*2,true);
-  dv.setUint16(32,2,true); dv.setUint16(34,16,true); wrStr(36,"data"); dv.setUint32(40,len*2,true);
-  let off=44; for(let i=0;i<len;i++){ const t=i/sr; const env=Math.exp(-6*i/len); const s=Math.sign(Math.sin(2*Math.PI*freq*t))*0.98*env; dv.setInt16(off, s*32767, true); off+=2; }
-  return URL.createObjectURL(new Blob([buf], {type:"audio/wav"}));
+// 針・バー（±50c→±60°、A4=442Hz厳密）
+let needlePos=0, needleVel=0;
+function smoothNeedle(targetCents, dtMs){ const dt=dtMs/1000, desired=Math.max(-50,Math.min(50,targetCents)); const K=10.5,D=9.5; const acc=K*(desired-needlePos)-D*needleVel; needleVel+=acc*dt; needlePos+=needleVel*dt; const angle=needlePos*(60/50); needleSvg?.setAttribute("transform",`rotate(${angle} 210 140)`); return needlePos; }
+function drawBarCents(c){ const pct=Math.max(0,Math.min(100,50+(c/50)*50)); needleBar.style.left=pct+"%"; }
+// ★ 442Hz基準：MIDI推定→基準周波数
+const names=["C","C#","D","D#","E","F","F#","G","G#","A","A#","B"];
+function nearNoteName(f){
+  if(!f||!isFinite(f)) return {name:"—",oct:"-",ref:0};
+  const m = Math.round(69 + 12*Math.log2(f/442));          // 442Hz 基準
+  const name = names[(m%12+12)%12];
+  const oct  = Math.floor(m/12)-1;
+  const ref  = 442*Math.pow(2,(m-69)/12);
+  return {name,oct,ref};
 }
-function initBeepPool(){
-  const urlS=makeBeepUrl(2400,110); const urlW=makeBeepUrl(1700,95);
-  strongPool=Array.from({length:8},()=>{const a=new Audio(urlS); a.preload="auto"; a.playsInline=true; a.volume=1.0; return a;});
-  weakPool  =Array.from({length:8},()=>{const a=new Audio(urlW); a.preload="auto"; a.playsInline=true; a.volume=1.0; return a;});
+const cents=(f,ref)=>1200*Math.log2(f/ref);
+const scoreFrom=c=>Math.min(100,Math.max(0,100-(Math.abs(c)/50)*100));
+
+// 火花
+const FX=fx.getContext("2d"); let particles=[];
+function sparks(x,y){ const W=fx.width=fx.clientWidth,H=fx.height=fx.clientHeight; for(let i=0;i<14;i++){ const a=Math.random()*Math.PI*2, v=60+Math.random()*120; particles.push({x,y,vx:Math.cos(a)*v,vy:Math.sin(a)*v,l:280}); } }
+function tickSparks(dt){ const W=fx.width=fx.clientWidth,H=fx.height=fx.clientHeight; FX.clearRect(0,0,W,H); FX.fillStyle="#7bffc0"; particles=particles.filter(p=>(p.l-=dt)>0).map(p=>{ p.x+=p.vx*dt/1000; p.y+=p.vy*dt/1000; FX.globalAlpha=Math.max(0,p.l/280); FX.fillRect(p.x,p.y,2,2); return p; }); }
+
+// セッション（二小節単位）
+function buildSession(key){
+  const all=makeExercise4Bars(key); // 32音 = 4小節
+  return { key, all, pass:parseInt(selPass.value,10)||90, blockIdx:0, noteIdx:0, ctx:null };
 }
-function playBeep(strong=false){ const pool=strong?strongPool:weakPool; const a=pool[strong?(poolIdxS++%pool.length):(poolIdxW++%pool.length)]; a.currentTime=0; a.play().catch(()=>{}); }
-function startMetronome(){
-  if(metroTimer) clearInterval(metroTimer);
-  if(!metroOn || !sessionRunning) return;
-  const bpm=+bpmInput.value, beatMs=60_000/bpm; let beat=0;
-  metroTimer=setInterval(()=>{ playBeep(beat%4===0); metroLed.style.background="#22c55e"; setTimeout(()=>metroLed.style.background="#334155",120); beat++; }, beatMs);
+function renderBlock(){
+  const off=session.blockIdx*16; // 2小節=16音
+  session.ctx=renderTwoBars({key:session.key, notes:session.all, offset:off});
+  session.ctx.recolor(session.noteIdx,"note-target");
+  prog.textContent=`音 ${off+session.noteIdx+1}/${session.all.length}`;
 }
-function stopMetronome(){ if(metroTimer) clearInterval(metroTimer); metroTimer=null; }
+function resetSession(key){
+  session=buildSession(key);
+  requestAnimationFrame(()=>renderBlock()); // レイアウト確定後に描画
+  advice.textContent="待機中…"; advice.style.color="#ffccd5"; bigScore.textContent="0";
+}
 
-/* ===== 波形（常時・左→右・プレイヘッド） ===== */
-let sweepX=0, lastOscT=0, lastW=0, lastH=0;
-function drawOsc(ts){
-  const ctx=oscCanvas.getContext('2d');
-  const w=oscCanvas.width=oscCanvas.clientWidth;
-  const h=oscCanvas.height=oscCanvas.clientHeight;
-  if(w!==lastW||h!==lastH){ ctx.fillStyle="#0f131a"; ctx.fillRect(0,0,w,h); lastW=w; lastH=h; sweepX=0; }
+// 進行
+function markAndAdvance(score){
+  const badge = score>=95?"◎":score>=90?"◯":"×";
+  session.ctx.badge(session.noteIdx, badge);
+  if(badge==="×"){ session.ctx.recolor(session.noteIdx,"note-failed"); }
+  const p=session.ctx.getXY(session.noteIdx); sparks(p.x,p.y);
 
-  const pxPerSec = w/20;
-  const dt = lastOscT ? (ts-lastOscT)/1000 : 0; lastOscT=ts;
-  const step = Math.max(1, Math.floor(pxPerSec*dt));
+  session.noteIdx++;
+  const abs = session.blockIdx*16 + session.noteIdx;
+  if(session.noteIdx<16 && abs<session.all.length){
+    session.ctx.recolor(session.noteIdx,"note-target");
+    prog.textContent=`音 ${abs+1}/${session.all.length}`;
+  }else{
+    session.blockIdx++; session.noteIdx=0;
+    if(session.blockIdx*16 >= session.all.length){ suspendAll("finished"); return; }
+    renderBlock();
+  }
+}
 
-  if(analyser){
-    const data=new Uint8Array(analyser.fftSize);
-    analyser.getByteTimeDomainData(data);
-    let maxAbs=0; for(let i=0;i<data.length;i++){ const v=Math.abs((data[i]-128)/128); if(v>maxAbs) maxAbs=v; }
-    const bar = Math.max(1, Math.floor(maxAbs*h*0.9));
-    for(let i=0;i<step;i++){
-      ctx.fillStyle="#0f131a"; ctx.fillRect(sweepX,0,1,h);
-      ctx.fillStyle="#8fbce8"; ctx.fillRect(sweepX, Math.floor(h/2 - bar/2), 1, bar);
-      ctx.fillStyle="#2dd4bf"; ctx.fillRect(sweepX, 0, 1, h); // プレイヘッド
-      sweepX++; if(sweepX>=w){ sweepX=0; }
+// ループ
+let lastT=performance.now();
+function loop(){
+  const now=performance.now(), dt=now-lastT; lastT=now;
+  const {freq}=detectPitch();
+
+  tickSparks(dt);
+
+  if(freq>0 && session){
+    const idxAbs = session.blockIdx*16 + session.noteIdx;
+    const target=session.all[idxAbs];
+    const fT=letterFreq(target.letter,target.octave,session.key);
+    const c=cents(freq,fT); drawBarCents(Math.max(-50,Math.min(50,c)));
+    const s=scoreFrom(c); bigScore.textContent=String(Math.round(s));
+
+    const near=nearNoteName(freq); const cn=cents(freq,near.ref);
+    const sm=smoothNeedle(cn,dt); centText.textContent=String(Math.round(sm));
+    noteText.textContent=near.name; octText.textContent=near.oct; hzText.textContent=`${Math.round(freq)} Hz`;
+
+    const a=Math.abs(c);
+    if(a>50){ advice.textContent="頑張ろう！"; advice.style.color="#f8b4c4"; }
+    else if(a>15){ advice.textContent=(c>0?`${a|0}c 高い`:`${a|0}c 低い`); advice.style.color="#ffd166"; }
+    else { advice.textContent="いい感じ！"; advice.style.color="#c7ffd1"; }
+
+    const passed=(a<=50)&&(s>=session.pass);
+    if(passed && now>advanceLockUntil){
+      advanceLockUntil=now+180;
+      setTimeout(()=>markAndAdvance(Math.round(s)),200);
     }
   }else{
-    for(let i=0;i<step;i++){ ctx.fillStyle="#0f131a"; ctx.fillRect(sweepX,0,1,h); ctx.fillStyle="#2dd4bf"; ctx.fillRect(sweepX,0,1,h); sweepX++; if(sweepX>=w){ sweepX=0; } }
-  }
-  requestAnimationFrame(drawOsc);
-}
-
-/* ===== 解析結果（常時） ===== */
-function onPitchMessage(ev){
-  const {f0, conf, rms, dropped, now} = ev.data || {};
-  const tNow = now || performance.now();
-
-  if(rms < LEVEL_RMS_THRESHOLD){
-    if(!lowLevelSince) lowLevelSince=tNow;
-    if(tNow - lowLevelSince > 1500){ notify('入力が小さいです。マイクを近づけてください。','warn',1800,true); lowLevelSince=tNow; }
-  }else lowLevelSince=0;
-
-  if(dropped) notify('処理が追いついていません。他アプリを閉じてください。','warn',3000);
-
-  // セッション外：針とカラオケだけ
-  if(!sessionRunning){
-    if(!f0){ updateNeedle(0); return; }
-    if(scaleData){
-      const n=scaleData.noteObjs[Math.min(idx, scaleData.noteObjs.length-1)];
-      const fTarget=letterFreq(n.letter,n.octave,scaleData.keySignature,A4_REF_HZ);
-      const cents=centsDiff(f0,fTarget);
-      updateNeedle(cents); drawKaraoke(cents);
-    }
-    return;
+    const sm=smoothNeedle(0,dt); centText.textContent=String(Math.round(sm)); bigScore.textContent="0";
   }
 
-  // セッション中
-  if(!f0 || conf<0.5 || rms<LEVEL_RMS_THRESHOLD){
-    drawKaraoke(null);
-    if(tNow - lastPitchWarn > 2000){ feedbackEl.textContent='検出が不安定です。一定の弓圧で弾いてください。'; lastPitchWarn=tNow; }
-    return;
-  }
-  const cur=scaleData.noteObjs[idx];
-  const fTarget=letterFreq(cur.letter,cur.octave,scaleData.keySignature,A4_REF_HZ);
-  const cents=centsDiff(f0,fTarget);
-  const sc=scoreFromCents(Math.abs(cents));
-  bigScoreEl.textContent=String(sc); colorScore(sc);
-  feedbackEl.textContent=`音 ${idx+1}/${scaleData.noteObjs.length}`;
-  updateNeedle(cents); drawKaraoke(cents);
-
-  if(firstScores[idx]==null){ firstScores[idx]=sc; }
-  if(sc >= passThreshold){
-    idx++;
-    if(idx >= scaleData.noteObjs.length){ finishScale(); return; }
-    highlightIndex(renderCtx, idx, Math.min(idx+1, scaleData.noteObjs.length-1));
-  }
+  if(running) rafId=requestAnimationFrame(loop);
 }
 
-/* ===== カラオケ（先定義） ===== */
-const karaokePts=[];
-function drawKaraoke(centsOrNull){
-  const ctx=karaokeCanvas.getContext('2d'); const w=karaokeCanvas.width, h=karaokeCanvas.height;
-  ctx.clearRect(0,0,w,h);
-  ctx.strokeStyle="rgba(200,200,200,0.4)"; ctx.lineWidth=1; ctx.beginPath(); ctx.moveTo(0,h*0.5); ctx.lineTo(w,h*0.5); ctx.stroke();
+// 許可・UI（可視時のみ許可要求）
+window.__permit = async function(){
+  if(document.visibilityState!=="visible"){ pushErr("非表示中の許可要求は行いません"); return; }
+  const ok=await openMic();
+  if(ok){ resetSession(selKey.value); running=false; btnStart.disabled=false; btnStop.disabled=true; }
+  else { gate.setAttribute("aria-hidden","false"); }
+};
+["pointerup","touchend","click"].forEach(t=> permit.addEventListener(t, async (e)=>{e.preventDefault(); await window.__permit(); }, {passive:false}));
 
-  if(inScale && scaleData){
-    const stepW=w/scaleData.vexKeys.length;
-    ctx.fillStyle="rgba(45,212,191,0.15)"; ctx.fillRect(0,0, stepW*(idx+1), h);
-    for(let i=0;i<=scaleData.vexKeys.length;i++){
-      const x=i*stepW;
-      ctx.strokeStyle= (i%8===0) ? "rgba(120,160,170,0.45)" : "rgba(100,160,160,0.25)";
-      if(i%2===0){ ctx.beginPath(); ctx.moveTo(x,0); ctx.lineTo(x,h); ctx.stroke(); }
-    }
-  }
-  if(centsOrNull!=null){
-    const c=Math.max(-50,Math.min(50,centsOrNull));
-    const y=h*0.5 - (c/50)*(h*0.4);
-    const x= inScale && scaleData ? (w/scaleData.vexKeys.length)*(idx + 0.5) : w*0.5;
-    karaokePts.push({x,y}); if(karaokePts.length>160) karaokePts.shift();
-    ctx.strokeStyle="rgba(45,212,191,0.95)"; ctx.lineWidth=2; ctx.beginPath();
-    karaokePts.forEach((p,i)=>{ if(i===0) ctx.moveTo(p.x,p.y); else ctx.lineTo(p.x,p.y); }); ctx.stroke();
-  }
+async function startFlow(){
+  if(document.visibilityState!=="visible"){ pushErr("非表示中の開始は無効です"); return; }
+  if(!mediaStream){ const ok=await openMic(); if(!ok) return; }
+  if(!session) resetSession(selKey.value);
+  running=true; btnStart.disabled=true; btnStop.disabled=false; lastT=performance.now(); loop();
 }
+["pointerup","touchend","click"].forEach(t=> btnStart.addEventListener(t,(e)=>{e.preventDefault();startFlow();},{passive:false}));
+btnStop.addEventListener("click",()=>suspendAll("stop"));
 
-/* ===== 結果 ===== */
-function finishScale(){
-  stopMetronome();
-  const valid=firstScores.filter(x=>typeof x==='number');
-  const avg=valid.length? Math.round(valid.reduce((s,x)=>s+x,0)/valid.length):0;
-  showResult(avg); stopSession();
-}
-function showResult(final){
-  const resultEl=document.getElementById('result');
-  const finalScoreEl=document.getElementById('final-score');
-  const praiseEl=document.getElementById('praise');
-  const detailsEl=document.getElementById('details');
-  const PRAISES=["すごい！モーツァルトかと思いました！","今日の主役です！","響きが美しいです！","音程が澄み切っています！","ピッチコントロールが神！","耳が良すぎます！"];
-  praiseEl.textContent=PRAISES[Math.floor(Math.random()*PRAISES.length)];
-  detailsEl.textContent=`各音は「最初に検出したスコア」を平均化。最終: ${final} 点`;
-  let v=0; const t0=performance.now(), dur=900;
-  (function anim(t){const r=Math.min(1,(t-t0)/dur); v=Math.floor(final*r*r+0.5); finalScoreEl.textContent=String(v); if(r<1) requestAnimationFrame(anim);})(performance.now());
-  resultEl.classList.add('show'); resultEl.setAttribute('aria-hidden','false');
-  document.getElementById('again').onclick=()=>{ resultEl.classList.remove('show'); resultEl.setAttribute('aria-hidden','true'); startSession(); };
-  document.getElementById('close').onclick=()=>{ resultEl.classList.remove('show'); resultEl.setAttribute('aria-hidden','true'); };
-}
+selKey.addEventListener("change",()=>{ suspendAll("key-change"); resetSession(selKey.value); });
 
-/* ===== エンジン起動（常時） ===== */
-async function startEngine(){
-  if(audioReady) return;
-  try{
-    ac=new (window.AudioContext||window.webkitAudioContext)({latencyHint:"interactive"});
-    await ac.audioWorklet.addModule('./pitch-worklet.js');
-    mediaStream = await navigator.mediaDevices.getUserMedia({audio:{echoCancellation:false, noiseSuppression:false, autoGainControl:false}});
-    mic=ac.createMediaStreamSource(mediaStream);
-    analyser=ac.createAnalyser(); analyser.fftSize=2048;
-    workletNode=new AudioWorkletNode(ac,'pitch-detector',{numberOfInputs:1,numberOfOutputs:0});
-    workletNode.port.onmessage=onPitchMessage;
-    mic.connect(analyser); mic.connect(workletNode);
-    initBeepPool();
-    audioReady=true;
-    requestAnimationFrame(drawOsc);
-  }catch(e){ pushError(e); notify('マイク初期化に失敗。エラー情報を確認してください。','error',5000); }
-}
+errCopy.onclick=async ()=>{ try{ await navigator.clipboard.writeText([...errors.values()].join("\n")); }catch(e){ pushErr(e); } };
 
-async function hardResume(){ try{ await resumeAudio(); }catch{} }
-
-/* ===== セッション制御 ===== */
-function startSession(){
-  if(!audioReady){ notify('マイク初期化中です。画面を一度タップして有効化してください。','info',2500); hardResume(); return; }
-  sessionRunning=true; inScale=true; document.body.classList.add('running');
-  btnStart.disabled=true; btnStop.disabled=false;
-  passThreshold=+passSel.value;
-  try{
-    scaleData=buildMajorScale(currentKey);
-    renderCtx=renderScale(scaleData.keySignature, scaleData.vexKeys, scaleData.noteObjs);
-    idx=0; firstScores=Array(scaleData.vexKeys.length).fill(null);
-    highlightIndex(renderCtx,0,1);
-    startMetronome();
-  }catch(e){ pushError(e); notify('五線譜の描画に失敗（エラー情報を確認）','error',4000); }
-}
-function stopSession(){
-  sessionRunning=false; inScale=false; document.body.classList.remove('running');
-  btnStart.disabled=false; btnStop.disabled=true;
-  stopMetronome();
-  bigScoreEl.textContent="--"; bigScoreEl.className=""; feedbackEl.textContent="停止中";
-}
-
-/* ===== UI ===== */
-btnStart.addEventListener('click', ()=>{ hardResume(); startSession(); });
-btnStop.addEventListener('click', stopSession);
-passSel.addEventListener('change', ()=>{ passThreshold=+passSel.value; notify(`合格閾値: ${passThreshold} 点`,'info',1200,true); });
-bpmInput.addEventListener('change', ()=>{ const v=Math.max(40,Math.min(200, Math.round((+bpmInput.value)/5)*5)); bpmInput.value=String(v); startMetronome(); });
-metroToggle.addEventListener('change', ()=>{ metroOn=metroToggle.checked; startMetronome(); });
-
-/* “オプションなし”対策 */
-(function ensureKeyOptions(){
-  const values = new Set(Array.from(keySelect.options).map(o=>o.value));
-  if(!values.has(keySelect.value)) keySelect.value="G";
-})();
-keySelect.addEventListener('change', ()=>{
-  currentKey=keySelect.value;
-  if(!sessionRunning){
-    try{
-      scaleData=buildMajorScale(currentKey);
-      renderCtx=renderScale(scaleData.keySignature, scaleData.vexKeys, scaleData.noteObjs);
-      highlightIndex(renderCtx,0,1);
-    }catch(e){ pushError(e); }
-  }
-});
-
-/* 任意のユーザー操作でAudioContextを必ず起動（iOS対策） */
-['touchend','mousedown','keydown'].forEach(ev=>document.addEventListener(ev, resumeAudio, {passive:true}));
-
-window.addEventListener('resize', ()=>{
-  try{
-    if(scaleData){ renderCtx=renderScale(scaleData.keySignature, scaleData.vexKeys, scaleData.noteObjs); highlightIndex(renderCtx,Math.min(idx,scaleData.vexKeys.length-1),Math.min(idx+1,scaleData.vexKeys.length-1)); }
-  }catch(e){ pushError(e); }
-});
-
-/* ===== 初期化 ===== */
-(async function init(){
-  try{ await ensureVexFlow(); }catch{}
-  try{
-    scaleData=buildMajorScale(currentKey);
-    renderCtx=renderScale(scaleData.keySignature, scaleData.vexKeys, scaleData.noteObjs);
-    highlightIndex(renderCtx,0,1);
-  }catch(e){ pushError(e); }
-  await startEngine();           // 波形は常時
-  requestWakeLock();             // スリープ防止
-})();
+// 初期
+resetSession("G");

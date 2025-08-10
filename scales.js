@@ -1,53 +1,98 @@
-// バイオリン音域の長調スケール（4小節：8分×32音）
+// scales.js（全面差し替え）
+// A4=442Hz。小野アンナの3oct長音階（度数進行＋調号）を生成し、
+// セット全体が Violin 実用域 G3..G6（MIDI 55..91）に必ず収まるよう開始オクターブを自動調整。
 
-export const ALL_KEYS = ["G","D","A","E","C","F","Bb","Eb","Ab","B","F#","C#"];
-
-const NATURAL = {C:0,D:2,E:4,F:5,G:7,A:9,B:11};
 export const KEY_SIG = {
-  "C":  {sharps:[], flats:[]},
-  "G":  {sharps:["F"], flats:[]},
-  "D":  {sharps:["F","C"], flats:[]},
-  "A":  {sharps:["F","C","G"], flats:[]},
-  "E":  {sharps:["F","C","G","D"], flats:[]},
-  "B":  {sharps:["F","C","G","D","A"], flats:[]},
-  "F#": {sharps:["F","C","G","D","A","E"], flats:[]},
-  "C#": {sharps:["F","C","G","D","A","E","B"], flats:[]},
-  "F":  {sharps:[], flats:["B"]},
-  "Bb": {sharps:[], flats:["B","E"]},
-  "Eb": {sharps:[], flats:["B","E","A"]},
-  "Ab": {sharps:[], flats:["B","E","A","D"]},
+  "C":{sharps:[],flats:[]},
+  "G":{sharps:["F"],flats:[]},
+  "D":{sharps:["F","C"],flats:[]},
+  "A":{sharps:["F","C","G"],flats:[]},
+  "E":{sharps:["F","C","G","D"],flats:[]},
+  "B":{sharps:["F","C","G","D","A"],flats:[]},
+  "F#":{sharps:["F","C","G","D","A","E"],flats:[]},
+  "F":{flats:["B"],sharps:[]},
+  "Bb":{flats:["B","E"],sharps:[]},
+  "Eb":{flats:["B","E","A"],sharps:[]},
+  "Ab":{flats:["B","E","A","D"],sharps:[]}
 };
 
-function toVexKey(letter, octave){ return `${letter}/${octave}`; }
-function letterOrderFrom(start){
-  const seq=["C","D","E","F","G","A","B"]; const i=seq.indexOf(start);
-  return [...seq.slice(i),...seq.slice(0,i), start];
+// Ono Anna の慣用を踏まえた推奨開始（後で G3..G6 へクランプ）
+const START_BASE={
+  "G":["G",3],"D":["D",3],"A":["A",3],
+  "C":["C",4],"F":["F",3],"Bb":["Bb",3],
+  "Eb":["Eb",4],"E":["E",4],"B":["B",3],
+  "F#":["F#",3],"Ab":["Ab",3]
+};
+
+const LETTERS=["C","D","E","F","G","A","B"];
+const PC={ // Aを0（A4=442）
+  "C":-9,"C#":-8,"Db":-8,"D":-7,"D#":-6,"Eb":-6,"E":-5,"F":-4,
+  "F#":-3,"Gb":-3,"G":-2,"G#":-1,"Ab":-1,"A":0,"A#":1,"Bb":1,"B":2
+};
+const MIDI_MIN=55; // G3
+const MIDI_MAX=91; // G6
+
+function applyKeySig(letter,key){
+  const s=KEY_SIG[key]||KEY_SIG.C;
+  if(s.sharps.includes(letter)) return letter+"#";
+  if(s.flats.includes(letter))  return letter+"b";
+  return letter;
+}
+function midiFrom(letter,oct,key){
+  const L=applyKeySig(letter,key);
+  return 69 + ((oct-4)*12 + PC[L]);
+}
+export function letterFreq(letter, octave, key="C"){
+  const m=midiFrom(letter,octave,key);
+  return 442*Math.pow(2,(m-69)/12);
 }
 
-export function buildMajorScale(key){
-  const order = letterOrderFrom(key.replace("b","")[0]);
-  const upLetters = order.slice(0,8);
-  let octave = 4;
-  const up=[]; let oct=octave;
-  for(let i=0;i<8;i++){
-    const L=upLetters[i];
-    if(i>0 && upLetters[i-1]==="B" && L==="C") oct++;
-    up.push({letter:L, octave:(i===0?octave:oct)});
+// 1オクターブ分（8度含む、度数進行＋調号）
+function oneOct(rootL, rootO, key){
+  const out=[{letter:rootL,octave:rootO}];
+  const next=(L)=>LETTERS[(LETTERS.indexOf(L)+1)%7];
+  let L=rootL, O=rootO;
+  for(let i=0;i<7;i++){
+    const N=next(L);
+    if((L==="E"&&N==="F")||(L==="B"&&N==="C")) O++; // 度だけ進め、E→F／B→Cでオクターブ繰上げ
+    out.push({letter:N,octave:O});
+    L=N;
   }
-  const down=[...up].reverse();
-  const notes=[...up, ...down, ...up, ...down];
-  return {
-    id:key, keySignature:key,
-    vexKeys: notes.map(n=>toVexKey(n.letter,n.octave)),
-    noteObjs: notes
-  };
+  return out;
 }
 
-export function letterFreq(letter, octave, key, a4=442){
-  const sig = KEY_SIG[key] || KEY_SIG["C"];
-  let semi = NATURAL[letter];
-  if((sig.sharps||[]).includes(letter)) semi += 1;
-  if((sig.flats||[]).includes(letter))  semi -= 1;
-  const n = (octave-4)*12 + (semi-9); // A=9
-  return a4 * Math.pow(2, n/12);
+// セット（上行24＋下行24）が G3..G6 に入るよう開始オクターブを両方向で調整
+function clampStart(L,O,key){
+  let guard=12;
+  while(guard--){
+    const up1=oneOct(L,O,key), up2=oneOct(up1[7].letter,up1[7].octave,key), up3=oneOct(up2[7].letter,up2[7].octave,key);
+    const up24=[...up1,...up2,...up3].slice(0,24);
+    const down24=[...up24].reverse();
+    const all=[...up24,...down24];
+    let minM=999, maxM=-999;
+    for(const n of all){ const m=midiFrom(n.letter,n.octave,key); if(m<minM)minM=m; if(m>maxM)maxM=m; }
+    if(maxM>MIDI_MAX){ O--; continue; }
+    if(minM<MIDI_MIN){ O++; continue; }
+    return O;
+  }
+  return O; // 保険
+}
+
+export function makeMajorScale3Oct(key="G"){
+  let [L,O]=START_BASE[key]||["G",3];
+  O=clampStart(L,O,key);
+  const up1=oneOct(L,O,key), up2=oneOct(up1[7].letter,up1[7].octave,key), up3=oneOct(up2[7].letter,up2[7].octave,key);
+  const up24=[...up1,...up2,...up3].slice(0,24);
+  const down24=[...up24].reverse();
+  return {keySignature:key, notes:[...up24,...down24]}; // 48音
+}
+
+// エクササイズ：4小節=32音（上行24＋下行8）
+export function makeExercise4Bars(key="G"){
+  const {notes}=makeMajorScale3Oct(key);
+  return notes.slice(0,32);
+}
+
+export function toVexKeys(objs, key="C"){
+  return objs.map(o=>`${applyKeySig(o.letter,key)}/${o.octave}`);
 }
