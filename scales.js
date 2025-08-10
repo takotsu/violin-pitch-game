@@ -1,56 +1,81 @@
-// バイオリン音域での各長調スケール（4小節：8分×32音）
-
-export const ALL_KEYS = ["G","D","A","E","C","F","Bb","Eb","Ab","B","F#","C#"];
-
-const NATURAL = {C:0,D:2,E:4,F:5,G:7,A:9,B:11};
-const KEY_SIG = {
-  "C": {sharps:[], flats:[]},
-  "G": {sharps:["F"], flats:[]},
-  "D": {sharps:["F","C"], flats:[]},
-  "A": {shsharps:["F","C","G"], flats:[]}
+// scales.js
+// A4=442Hz。小野アンナ準拠の3oct長音階（実用域：開始G3等、上限は概ねG6にクリップ）。
+export const KEY_SIG = {
+  "C":{sharps:[],flats:[]},
+  "G":{sharps:["F"],flats:[]},
+  "D":{sharps:["F","C"],flats:[]},
+  "A":{sharps:["F","C","G"],flats:[]},
+  "E":{sharps:["F","C","G","D"],flats:[]},
+  "B":{sharps:["F","C","G","D","A"],flats:[]},
+  "F#":{sharps:["F","C","G","D","A","E"],flats:[]},
+  "F":{flats:["B"],sharps:[]},
+  "Bb":{flats:["B","E"],sharps:[]},
+  "Eb":{flats:["B","E","A"],sharps:[]},
+  "Ab":{flats:["B","E","A","D"],sharps:[]}
 };
-// ↑タイプミス対策：上で完全定義
-Object.assign(KEY_SIG,{
-  "E": {sharps:["F","C","G","D"], flats:[]},
-  "B": {sharps:["F","C","G","D","A"], flats:[]},
-  "F#":{sharps:["F","C","G","D","A","E"], flats:[]},
-  "C#":{sharps:["F","C","G","D","A","E","B"], flats:[]},
-  "F": {sharps:[], flats:["B"]},
-  "Bb":{sharps:[], flats:["B","E"]},
-  "Eb":{sharps:[], flats:["B","E","A"]},
-  "Ab":{sharps:[], flats:["B","E","A","D"]},
-});
 
-function toVexKey(letter, octave){ return `${letter}/${octave}`; }
-function letterOrderFrom(start){
-  const seq=["C","D","E","F","G","A","B"]; const i=seq.indexOf(start);
-  return [...seq.slice(i),...seq.slice(0,i), start];
+const START_BASE={
+  "G":["G",3],"D":["D",3],"A":["A",3],
+  "C":["C",4],"F":["F",3],"Bb":["Bb",3],
+  "Eb":["Eb",4],"E":["E",4],"B":["B",3],
+  "F#":["F#",3],"Ab":["Ab",3]
+};
+
+const LETTERS=["C","D","E","F","G","A","B"];
+const PC={"C":-9,"C#":-8,"Db":-8,"D":-7,"D#":-6,"Eb":-6,"E":-5,"F":-4,"F#":-3,"Gb":-3,"G":-2,"G#":-1,"Ab":-1,"A":0,"A#":1,"Bb":1,"B":2};
+export function letterFreq(letter, octave, key="C"){
+  const sig=KEY_SIG[key]||KEY_SIG.C;
+  let L=letter;
+  if(sig.sharps.includes(letter)) L+= "#";
+  if(sig.flats.includes(letter))  L+= "b";
+  const n=(octave-4)*12 + PC[L];
+  return 442*Math.pow(2,n/12);
 }
 
-export function buildMajorScale(key){
-  const order = letterOrderFrom(key.replace("b","")[0]);
-  const upLetters = order.slice(0,8);
-  let octave = 4;
-  const up=[]; let oct=octave;
-  for(let i=0;i<8;i++){
-    const L=upLetters[i];
-    if(i>0 && upLetters[i-1]==="B" && L==="C") oct++;
-    up.push({letter:L, octave:(i===0?octave:oct)});
+function oneOct(rootL, rootO){
+  const out=[{letter:rootL,octave:rootO}];
+  const next=(L)=>LETTERS[(LETTERS.indexOf(L)+1)%7];
+  let L=rootL, O=rootO;
+  for(let i=0;i<7;i++){
+    const N=next(L);
+    if((L==="E"&&N==="F")||(L==="B"&&N==="C")) O++;
+    out.push({letter:N,octave:O}); L=N;
   }
-  const down=[...up].reverse();
-  const notes=[...up, ...down, ...up, ...down];
-  return {
-    id:key, keySignature:key,
-    vexKeys: notes.map(n=>toVexKey(n.letter,n.octave)),
-    noteObjs: notes
-  };
+  return out; // 8音
 }
 
-export function letterFreq(letter, octave, key, a4=442){
-  const sig = KEY_SIG[key] || KEY_SIG["C"];
-  let semi = NATURAL[letter];
-  if(sig.sharps.includes(letter)) semi += 1;
-  if(sig.flats.includes(letter))  semi -= 1;
-  const n = (octave-4)*12 + (semi-9); // A=9
-  return a4 * Math.pow(2, n/12);
+function clampStart(L,O,key){
+  // 目標上限：概ね G6（G線〜E線の実用域内）
+  const G6=letterFreq("G",6,key);
+  let guard=6;
+  while(guard--){
+    const a1=oneOct(L,O), a2=oneOct(a1[7].letter,a1[7].octave), a3=oneOct(a2[7].letter,a2[7].octave);
+    const top=a3[7];
+    if(letterFreq(top.letter,top.octave,key)<=G6) break;
+    O--;
+  }
+  return O;
+}
+
+export function makeMajorScale3Oct(key="G"){
+  let [L,O]=START_BASE[key]||["G",3];
+  O=clampStart(L,O,key);
+  const up=[...oneOct(L,O)];
+  const o2=oneOct(up[7].letter,up[7].octave); up.push(...o2);
+  const o3=oneOct(o2[7].letter,o2[7].octave); up.push(...o3);
+  const up24=up.slice(0,24);
+  const down24=[...up24].reverse();
+  return {keySignature:key, notes:up24.concat(down24)}; // 48音
+}
+
+// 課題（4小節=32音）用に切り出し
+export function makeExercise4Bars(key="G"){
+  const {notes}=makeMajorScale3Oct(key);
+  return notes.slice(0,32); // 1小節=8音×4
+}
+
+export function toVexKeys(objs, key="C"){
+  const sig=KEY_SIG[key]||KEY_SIG.C;
+  const mapL=(L)=>sig.sharps.includes(L)?L+"#":sig.flats.includes(L)?L+"b":L;
+  return objs.map(o=>`${mapL(o.letter)}/${o.octave}`);
 }

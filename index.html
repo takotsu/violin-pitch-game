@@ -1,115 +1,111 @@
+<!-- index.html -->
 <!doctype html>
 <html lang="ja">
 <head>
   <meta charset="utf-8" />
-  <title>Violin Pitch Game (A=442Hz)</title>
-  <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover" />
-  <link rel="stylesheet" href="./style.css" />
-  <!-- VexFlowはapp.jsでフォールバック付き動的ロード。ここでは読みません -->
+  <title>Violin Scale Trainer</title>
+  <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+  <link rel="stylesheet" href="./style.css">
+  <!-- VexFlow（在れば使用、無くても自前SVGで描画） -->
+  <script src="./lib/vexflow-min.js"></script>
+  <script defer src="https://cdn.jsdelivr.net/npm/vexflow@3.0.9/build/vexflow-min.js"></script>
 </head>
 <body>
-  <header>
-    <h1>Violin Pitch Game (A=442Hz)</h1>
-    <span id="app-version" class="version">v9</span>
-  </header>
-
-  <section id="controls">
+  <header id="topbar">
     <div class="row">
-      <label>スケールの調:
-        <!-- “オプションなし”回避のため静的にも用意 -->
-        <select id="key-select">
-          <option>G</option><option>D</option><option>A</option><option>E</option>
-          <option>C</option><option>F</option><option>Bb</option><option>Eb</option>
-          <option>Ab</option><option>B</option><option>F#</option><option>C#</option>
+      <div class="group">
+        <label>スケール調</label>
+        <select id="key-select" class="sf">
+          <option>G</option><option>D</option><option>A</option><option>C</option>
+          <option>F</option><option>Bb</option><option>Eb</option>
+          <option>E</option><option>B</option><option>F#</option><option>Ab</option>
         </select>
-      </label>
-      <label>合格閾値（点）:
-        <select id="pass">
-          <option>70</option><option>75</option><option>80</option><option>85</option>
-          <option selected>90</option><option>95</option>
-        </select>
-      </label>
-
-      <div id="metro">
-        <label>BPM:
-          <input id="bpm" type="number" min="40" max="200" step="5" value="80" />
-        </label>
-        <label class="switch">
-          <input id="metroToggle" type="checkbox" />
-          <span>メトロノーム</span>
-        </label>
-        <span id="metro-led" aria-hidden="true"></span>
-        <button id="tunerBtn" class="tuner" title="既製チューナーのON/OFF">チューナー</button>
       </div>
-    </div>
-
-    <div class="row">
-      <div class="buttons">
-        <button id="start">開始</button>
+      <div class="group">
+        <label>合格閾値</label>
+        <select id="pass" class="sf"></select>
+      </div>
+      <div class="group">
+        <label>音量閾値(RMS)</label>
+        <input id="rms" type="number" min="0.0005" max="0.02" step="0.0005" value="0.0015" class="sf"/>
+      </div>
+      <div class="group">
+        <label>表示dB補正</label>
+        <input id="dbCal" type="number" step="1" value="0" class="sf"/>
+      </div>
+      <div class="right">
+        <button id="start" class="primary">開始</button>
         <button id="stop" disabled>停止</button>
       </div>
+      <span id="version" class="version">v31</span>
+      <span id="micdb" class="micdb">— dB</span>
     </div>
-  </section>
+  </header>
 
-  <main>
-    <!-- 五線譜（VexFlow or フォールバックSVG） -->
-    <section id="score-area">
+  <main id="main">
+    <section id="panel">
+      <!-- HUD：針＋バー＋スコア -->
+      <div id="hud">
+        <div id="big-score">0</div>
+        <div id="advice">待機中…</div>
+
+        <div id="tuner">
+          <svg id="tuner-svg" viewBox="0 0 420 180" width="100%" height="140" role="img" aria-label="tuner">
+            <defs>
+              <linearGradient id="gaugeGrad" x1="0" y1="0" x2="0" y2="1">
+                <stop offset="0%" stop-color="#251a12"/><stop offset="100%" stop-color="#120e0a"/>
+              </linearGradient>
+            </defs>
+            <rect x="0" y="0" width="420" height="180" rx="16" fill="url(#gaugeGrad)" stroke="#3a2b20"/>
+            <g id="ticks"></g>
+            <line x1="210" y1="46" x2="210" y2="140" stroke="#8fd1ff" stroke-width="2" opacity="0.9"/>
+            <g id="needle" transform="rotate(0 210 140)">
+              <line x1="210" y1="140" x2="210" y2="30" stroke="#72f1a5" stroke-width="3"/>
+              <circle cx="210" cy="140" r="6" fill="#72f1a5"/>
+            </g>
+            <text id="noteText" x="20" y="60" fill="#e8eef7" font-size="36" font-weight="900">—</text>
+            <text id="octText"  x="68" y="60" fill="#c6d8e5" font-size="22" font-weight="800">-</text>
+            <text id="hzText"   x="20" y="86" fill="#9bb8cc" font-size="13">0 Hz</text>
+            <text id="centText" x="400" y="60" fill="#e8eef7" font-size="34" font-weight="900" text-anchor="end">0</text>
+            <text x="400" y="86" fill="#9bb8cc" font-size="12" text-anchor="end">cents</text>
+          </svg>
+          <div id="cents">
+            <div class="labels"><span>-50c</span><span>-25c</span><span>0c</span><span>+25c</span><span>+50c</span></div>
+            <div id="bar"><div id="needleBar"></div></div>
+          </div>
+        </div>
+      </div>
+
+      <!-- 流れる譜面（最低2小節表示、全4小節の課題） -->
       <div id="staff-wrap">
+        <canvas id="fx"></canvas>
         <div id="staff"></div>
-        <canvas id="karaoke"></canvas>
       </div>
-    </section>
 
-    <!-- スコア／フィードバック -->
-    <section id="score-panel">
-      <div id="big-score">--</div>
-      <div id="feedback">待機中…</div>
-    </section>
-
-    <!-- ±50c バー -->
-    <section id="cents-area">
-      <div id="cents-scale">
-        <span>-50c</span><span>-25c</span><span>0c</span><span>+25c</span><span>+50c</span>
-      </div>
-      <div id="cents-bar"><div id="needle"></div></div>
-    </section>
-
-    <!-- 常時ライブ波形（左→右スイープ、プレイヘッド付き） -->
-    <section id="osc-area">
-      <canvas id="osc"></canvas>
+      <div id="prog" class="sf">音 1/32</div>
     </section>
   </main>
 
-  <!-- 結果モーダル -->
-  <div id="result" aria-hidden="true">
-    <canvas id="confetti"></canvas>
-    <div class="card">
-      <div class="label">総合得点</div>
-      <div id="final-score">0</div>
-      <div id="praise">Bravo!!</div>
-      <div id="details"></div>
-      <div class="buttons">
-        <button id="again">もう一度</button>
-        <button id="close">閉じる</button>
-      </div>
+  <!-- マイク許可ゲート -->
+  <div id="mic-gate" aria-hidden="false">
+    <div class="gate-card">
+      <h2>マイク使用のお願い</h2>
+      <p>「マイクを許可」を押してください。</p>
+      <button id="permit" class="primary big" onclick="window.__permit && window.__permit()">マイクを許可</button>
     </div>
   </div>
 
-  <!-- エラー一覧ポップアップ（コピー可） -->
-  <div id="error-modal" aria-hidden="true">
-    <div class="card">
-      <h2>エラー情報</h2>
-      <ol id="error-list"></ol>
-      <div class="buttons">
-        <button id="err-copy">内容をコピー</button>
-        <button id="err-close">閉じる</button>
-      </div>
-    </div>
-  </div>
+  <!-- エラー（ページ最下部、重複なし） -->
+  <footer id="errors">
+    <h3>エラー情報</h3>
+    <ol id="error-list"></ol>
+    <button id="err-copy" class="small">内容をコピー</button>
+  </footer>
 
-  <div id="toast" aria-live="polite" aria-atomic="true"></div>
+  <video id="nosleep" muted playsinline loop style="position:absolute;width:1px;height:1px;opacity:0;pointer-events:none">
+    <source src="data:video/mp4;base64,AAAAHGZ0eXBpc28yAAAAAGlzbzJpc28yYXZjMQAA" type="video/mp4">
+  </video>
 
-  <!-- アプリ -->
   <script type="module" src="./scales.js"></script>
   <script type="module" src="./score.js"></script>
   <script type="module" src="./app.js"></script>
