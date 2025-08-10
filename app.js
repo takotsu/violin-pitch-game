@@ -1,338 +1,283 @@
-import { ALL_KEYS, buildMajorScale, letterFreq } from "./scales.js";
-import { renderScale, highlightIndex } from "./score.js";
+// app.js v0-3b — VexFlowロード待ち＆自動ポーリングで必ず描画。ポジション表記ナシ。
+import { makeMajorScale3Oct, toVexKeys, letterFreq } from "./scales.js";
+import { renderPage, recolorPage } from "./score.js";
 
-/* ===== 設定 ===== */
-const A4_REF_HZ = 442;
-const STUCK_SEC_BEFORE_AUTONEXT = 3;
-const COOLDOWN_NEXT_MS = 220;
-const PASS_BAND_CENTS = 15;
+const selKey = document.getElementById("key-select");
+const selPass= document.getElementById("pass");
+const inpRMS = document.getElementById("rms");
+const inpDbCal= document.getElementById("dbCal");
+const btnStart=document.getElementById("start");
+const btnStop =document.getElementById("stop");
+const advice  =document.getElementById("advice");
+const bigScore=document.getElementById("big-score");
+const prog    =document.getElementById("prog");
+const needle  =document.getElementById("needle");
+const fxCanvas=document.getElementById("fx");
+const micdb   =document.getElementById("micdb");
+const gate    =document.getElementById("mic-gate");
+const permit  =document.getElementById("permit");
+// tuner
+const tunNote = document.getElementById("tun-note");
+const tunOct  = document.getElementById("tun-oct");
+const tunNeed = document.getElementById("tun-needle");
+const tunCentNum = document.getElementById("tun-centnum");
 
-/* ===== エラーログ ===== */
-const errorLog = [];
-function pushError(e){
-  const msg = (e?.message||e)?.toString();
-  const stack = e?.error?.stack || e?.stack || "";
-  const entry = `${new Date().toLocaleString()} : ${msg}\n${stack}`;
-  errorLog.push(entry); renderErrorModal();
+for(let p=85;p<=100;p++){ const o=document.createElement("option"); o.textContent=p; selPass.appendChild(o); }
+selPass.value="90";
+
+const errors=[];
+const pushErr=(e)=>{ const t=new Date().toISOString().replace("T"," ").slice(0,19); const line=`${t} : ${e}`; errors.push(line); console.warn(line); };
+function showErrorModal(){
+  const modal=document.getElementById("error-modal"); const list=document.getElementById("error-list"); list.innerHTML="";
+  errors.slice(-200).forEach(s=>{ const li=document.createElement("li"); li.textContent=s; list.appendChild(li); });
+  modal.setAttribute("aria-hidden","false");
+  document.getElementById("err-close").onclick=()=>modal.setAttribute("aria-hidden","true");
+  document.getElementById("err-copy").onclick=()=>navigator.clipboard.writeText(errors.join("\n"));
 }
-window.addEventListener('error',(ev)=>{ pushError(ev); notify('エラーが発生（詳細を見るをタップ）','error',3500); showErrorModal(); });
-window.addEventListener('unhandledrejection',(ev)=>{ pushError(ev.reason||ev); notify('エラーが発生（詳細を見るをタップ）','error',3500); showErrorModal(); });
-function renderErrorModal(){ const list=document.getElementById('error-list'); if(!list) return; list.innerHTML=""; errorLog.slice(-80).forEach(t=>{ const li=document.createElement('li'); li.textContent=t; list.appendChild(li); }); }
-function showErrorModal(){ const m=document.getElementById('error-modal'); m.classList.add('show'); m.setAttribute('aria-hidden','false'); }
-function hideErrorModal(){ const m=document.getElementById('error-modal'); m.classList.remove('show'); m.setAttribute('aria-hidden','true'); }
-document.getElementById('err-close').onclick=hideErrorModal;
-document.getElementById('err-copy').onclick=async()=>{ await navigator.clipboard.writeText(errorLog.join('\n\n')); notify('エラー内容をコピーしました。','info',2000); };
+window.addEventListener("error",ev=>{ pushErr(ev.message||"Error"); });
 
-/* ===== 通知 ===== */
-let toastTimer;
-function notify(msg, level='warn', ms=2500, tiny=false){
-  const el=document.getElementById('toast');
-  el.className=`${level} ${tiny?'tiny':''} show`; el.textContent=msg;
-  clearTimeout(toastTimer); toastTimer=setTimeout(()=>el.className=el.className.replace('show',''), ms);
-}
-
-/* ===== Wake Lock ===== */
-let wakeLock = null;
-const nosleepVideo = document.getElementById('nosleep');
-async function keepAwakeEnable(){
-  try{
-    if('wakeLock' in navigator){
-      wakeLock = await navigator.wakeLock.request('screen');
-      wakeLock.addEventListener('release', ()=>{});
-    }else{
-      if(nosleepVideo && nosleepVideo.paused){ await nosleepVideo.play().catch(()=>{}); }
-    }
-  }catch{}
-}
-async function keepAwakeDisable(){
-  try{ if(wakeLock){ await wakeLock.release(); wakeLock=null; } }catch{}
-  try{ if(nosleepVideo && !nosleepVideo.paused){ nosleepVideo.pause(); } }catch{}
-}
-
-/* ===== VexFlow ===== */
-async function ensureVexFlow(){
-  if(window.Vex?.Flow) return true;
-  const cdns = [
-    "https://cdn.jsdelivr.net/npm/vexflow@3.0.9/build/vexflow-min.js",
-    "https://unpkg.com/vexflow@3.0.9/build/vexflow-min.js"
-  ];
-  for(const url of cdns){
-    try{ await loadScript(url, 7000); if(window.Vex?.Flow) return true; }
-    catch(e){ pushError(new Error(`VexFlow load fail: ${url}`)); }
+// ---- VexFlow ロード待機（タイムアウト後もポーリング継続） ----
+async function waitVexFlow(timeoutMs=5000){
+  const ok = ()=> !!window.Vex?.Flow;
+  if(ok()) return true;
+  const start = performance.now();
+  while(performance.now() - start < timeoutMs){
+    await new Promise(r=>setTimeout(r,50));
+    if(ok()) return true;
   }
-  pushError(new Error("VexFlowをCDNから読み込めませんでした。フォールバック描画に切り替えます。"));
+  pushErr("VexFlow load timeout");
   return false;
 }
-function loadScript(src, timeoutMs=7000){
-  return new Promise((res,rej)=>{
-    const s=document.createElement('script'); s.src=src; s.crossOrigin="anonymous"; s.referrerPolicy="no-referrer";
-    const to=setTimeout(()=>{ s.remove(); rej(new Error("timeout")); }, timeoutMs);
-    s.onload=()=>{ clearTimeout(to); res(); };
-    s.onerror=()=>{ clearTimeout(to); rej(new Error("onerror")); };
-    document.head.appendChild(s);
-  });
-}
 
-/* ===== UI ===== */
-const adviceEl=document.getElementById('advice');
-const bigScoreEl=document.getElementById('big-score');
-const miniScoreEl=document.getElementById('mini-score');
-const needleEl=document.getElementById('needle');
-const passSel=document.getElementById('pass');
-const btnStart=document.getElementById('start');
-const btnStop=document.getElementById('stop');
-const bpmInput=document.getElementById('bpm');
-const metroLed=document.getElementById('metro-led');
-const metroToggle=document.getElementById('metroToggle');
-const keySelect=document.getElementById('key-select');
-const rmsInput=document.getElementById('rms');
-const progEl=document.getElementById('prog');
+let audio, analyser, aHP,aPeak, srcNode, mediaStream;
+let rafId=null, running=false, pageCtx=null, renderPoll=null;
 
-/* ===== 状態 ===== */
-let renderCtx=null, scaleData=null;
-let currentKey="G";
-let passThreshold=90;
-let LEVEL_RMS_THRESHOLD = 0.002;
-let sessionRunning=false;
-let idx=0;
-let lastProgressTime=0;
-let lastValidTime=0;
-let lastAdvanceTime=0;
-let mustExitPassBand=false;
-let scores=[];
-
-/* ===== 表示 ===== */
-function colorMini(diffAbs){
-  miniScoreEl.className="";
-  if(diffAbs<=5) miniScoreEl.classList.add('green'), miniScoreEl.textContent="◎";
-  else if(diffAbs<=15) miniScoreEl.classList.add('yellow'), miniScoreEl.textContent="◯";
-  else miniScoreEl.classList.add('red'), miniScoreEl.textContent="△";
-}
-function updateNeedle(c){ const clamped=Math.max(-50,Math.min(50,c)); const pct=(clamped+50)/100; needleEl.style.left=`calc(${pct*100}% - 1px)`; }
-let lastAdviceTs = 0;
-function setAdviceThrottled(cents, score){
-  const now = performance.now();
-  if(now - lastAdviceTs < 140) return; // 更新頻度を下げる
-  lastAdviceTs = now;
-  const abs=Math.abs(cents);
-  const arrow = cents>0 ? "↑" : (cents<0 ? "↓" : "＝");
-  const text = `${(abs|0)}c ${arrow}`;
-  adviceEl.className="";
-  if(abs<=5){ adviceEl.classList.add('good'); adviceEl.textContent = text+"（そのまま）"; }
-  else if(abs<=20){ adviceEl.classList.add('warn'); adviceEl.textContent = text+"（微調整）"; }
-  else { adviceEl.classList.add('bad'); adviceEl.textContent = text+"（思い切って修正）"; }
-  bigScoreEl.textContent = `${score}`;
-}
-
-/* ===== メトロノーム ===== */
-let metroTimer=null, metroOn=false, beat=0;
-let strongPool=[], weakPool=[], poolIdxS=0, poolIdxW=0;
-function makeBeepUrl(freq=2400, durMs=120, sr=44100){
-  const len=Math.floor(sr*durMs/1000), wavLen=44+len*2;
-  const buf=new ArrayBuffer(wavLen); const dv=new DataView(buf);
-  const wrStr=(o,s)=>{ for(let i=0;i<s.length;i++) dv.setUint8(o+i,s.charCodeAt(i)); };
-  wrStr(0,"RIFF"); dv.setUint32(4,wavLen-8,true); wrStr(8,"WAVE"); wrStr(12,"fmt "); dv.setUint32(16,16,true);
-  dv.setUint16(20,1,true); dv.setUint16(22,1,true); dv.setUint32(24,sr,true); dv.setUint32(28,sr*2,true);
-  dv.setUint16(32,2,true); dv.setUint16(34,16,true); wrStr(36,"data"); dv.setUint32(40,len*2,true);
-  let off=44; for(let i=0;i<len;i++){ const t=i/sr; const env=Math.exp(-6*i/len); const s=Math.sign(Math.sin(2*Math.PI*freq*t))*0.98*env; dv.setInt16(off, s*32767, true); off+=2; }
-  return URL.createObjectURL(new Blob([buf], {type:"audio/wav"}));
-}
-function initBeepPool(){
-  const urlS=makeBeepUrl(2500,120); const urlW=makeBeepUrl(1700,100);
-  strongPool=Array.from({length:8},()=>{const a=new Audio(urlS); a.preload="auto"; a.playsInline=true; a.volume=1.0; return a;});
-  weakPool  =Array.from({length:8},()=>{const a=new Audio(urlW); a.preload="auto"; a.playsInline=true; a.volume=1.0; return a;});
-}
-function playBeep(strong=false){ const pool=strong?strongPool:weakPool; const a=pool[strong?(poolIdxS++%pool.length):(poolIdxW++%pool.length)]; a.currentTime=0; a.play().catch(()=>{}); }
-function startMetronome(){
-  if(metroTimer) clearInterval(metroTimer);
-  if(!metroOn || !sessionRunning) return;
-  const bpm=+bpmInput.value, beatMs=60_000/bpm; beat=0;
-  metroTimer=setInterval(()=>{
-    playBeep(beat%4===0);
-    metroLed.style.background="#22c55e";
-    setTimeout(()=>metroLed.style.background="#334155",120);
-    if((beat%4===0) && sessionRunning){
-      const now=performance.now();
-      if(now - lastProgressTime > STUCK_SEC_BEFORE_AUTONEXT*1000 && now - lastValidTime < 1200){
-        idx = Math.min(idx+1, scaleData.noteObjs.length);
-        if(idx >= scaleData.noteObjs.length){ finishScale(); }
-        else { highlightIndex(renderCtx, idx); progEl.textContent=`音 ${idx+1}/${scaleData.noteObjs.length}`; lastProgressTime=now; mustExitPassBand=true; }
-      }
+async function ensureAudio(){
+  if(!audio){
+    audio = new (window.AudioContext||window.webkitAudioContext)({latencyHint:"interactive"});
+    if(audio.state==="suspended"){
+      try{ await audio.resume(); }catch{}
     }
-    beat++;
-  }, beatMs);
+  }
 }
-function stopMetronome(){ if(metroTimer) clearInterval(metroTimer); metroTimer=null; }
 
-/* ===== Audio ===== */
-let ac, workletNode, mic, analyser, mediaStream=null, audioReady=false;
-async function startAudioGraph(){
-  if(audioReady) return;
+async function openMic(){
+  await ensureAudio();
   try{
-    ac=new (window.AudioContext||window.webkitAudioContext)({latencyHint:"interactive"});
-    await ac.audioWorklet.addModule('./pitch-worklet.js');
     mediaStream = await navigator.mediaDevices.getUserMedia({
-      audio:{ echoCancellation:false, noiseSuppression:false, autoGainControl:false, channelCount:1 }
+      audio:{ echoCancellation:false,noiseSuppression:false,autoGainControl:false,channelCount:1 }
     });
-    mic=ac.createMediaStreamSource(mediaStream);
-    analyser=ac.createAnalyser(); analyser.fftSize=2048;
-    workletNode=new AudioWorkletNode(ac,'pitch-detector',{numberOfInputs:1,numberOfOutputs:0});
-    workletNode.port.onmessage=onWorkletMessage;
-    mic.connect(analyser); mic.connect(workletNode);
-    initBeepPool();
-    audioReady=true;
-  }catch(e){ pushError(e); notify('マイク初期化に失敗。エラー情報を確認してください。','error',5000); }
-}
-async function stopAudioGraph(){
-  try{
-    if(workletNode){ try{ workletNode.disconnect(); }catch{} workletNode.port.onmessage=null; workletNode=null; }
-    if(analyser){ try{ analyser.disconnect(); }catch{} analyser=null; }
-    if(mic){ try{ mic.disconnect(); }catch{} mic=null; }
-    if(mediaStream){ try{ mediaStream.getTracks().forEach(t=>t.stop()); }catch{} mediaStream=null; }
-    if(ac){ try{ await ac.suspend(); }catch{} try{ await ac.close(); }catch{} ac=null; }
-  }finally{ audioReady=false; }
-}
-async function resumeAudio(){ try{ if(ac && ac.state!=='running'){ await ac.resume(); } }catch(e){ pushError(e); }}
+  }catch(e){
+    pushErr("mic permission: "+e.message);
+    showErrorModal();
+    throw e;
+  }
+  gate.setAttribute("aria-hidden","true");
 
-/* 可視・不可視 */
-document.addEventListener('visibilitychange', async()=>{
-  if(!document.hidden){
-    await keepAwakeEnable();
-    if(!audioReady){ await startAudioGraph(); }
-    await resumeAudio();
+  srcNode = audio.createMediaStreamSource(mediaStream);
+  aHP   = audio.createBiquadFilter(); aHP.type="highpass"; aHP.frequency.value=100; aHP.Q.value=0.7;
+  aPeak = audio.createBiquadFilter(); aPeak.type="peaking"; aPeak.frequency.value=2500; aPeak.Q.value=1.0; aPeak.gain.value=5;
+  analyser = audio.createAnalyser(); analyser.fftSize=4096; analyser.smoothingTimeConstant=0.06;
+  srcNode.connect(aHP).connect(aPeak).connect(analyser);
+
+  try{ document.getElementById("nosleep").play(); }catch{}
+}
+function closeMic(){
+  if(mediaStream){ mediaStream.getTracks().forEach(t=>t.stop()); mediaStream=null; }
+  analyser=srcNode=aHP=aPeak=undefined;
+}
+
+const buf=new Float32Array(8192);
+function detectPitch(){
+  if(!analyser) return {freq:0,rms:0,db:0};
+  const len=Math.min(buf.length, analyser.fftSize);
+  const time=new Float32Array(len);
+  analyser.getFloatTimeDomainData(time);
+  let rms=0; for(let i=0;i<len;i++){ const v=time[i]; rms+=v*v; } rms=Math.sqrt(rms/len);
+
+  const raw = 20*Math.log10(Math.max(rms,1e-9)) + 94 + (parseFloat(inpDbCal.value)||0);
+  const db  = Math.max(0, Math.min(120, Math.round(raw)));
+  micdb.textContent = `${db} dB`;
+  micdb.style.color = (db>=80) ? "#ff3b30" : (db>=70) ? "#ff9f0a" : (db>=40) ? "#34c759" : "#8fb3cc";
+
+  if(rms < parseFloat(inpRMS.value||"0.0015")) return {freq:0,rms,db};
+
+  for(let i=0;i<len;i++){ const w=0.5*(1-Math.cos(2*Math.PI*i/(len-1))); buf[i]=time[i]*w; }
+  const sr=audio.sampleRate, fMin=110, fMax=2200;
+  const minLag=Math.floor(sr/fMax), maxLag=Math.floor(sr/fMin);
+  let bestLag=-1, best=0;
+  for(let lag=minLag; lag<=maxLag; lag++){
+    let sum=0; for(let i=0;i<len-lag;i++) sum+=buf[i]*buf[i+lag];
+    if(sum>best){ best=sum; bestLag=lag; }
+  }
+  if(bestLag>0){
+    let y0=0,y1=0,y2=0;
+    for(let i=0;i<len-(bestLag+1);i++){ y0+=buf[i]*buf[i+bestLag-1]; y1+=buf[i]*buf[i+bestLag]; y2+=buf[i]*buf[i+bestLag+1]; }
+    const p=0.5*(y0-y2)/(y0-2*y1+y2);
+    const lag = bestLag + (isFinite(p)?p:0);
+    return {freq: sr/lag, rms, db};
+  }
+  return {freq:0,rms,db};
+}
+
+const centsFrom=(f,ref)=>1200*Math.log2(f/ref);
+const scoreFromCents=c=>Math.min(100, Math.max(0, 100 - (Math.abs(c)/50)*100 ));
+const drawCents=c=>{ const pct=Math.max(0,Math.min(100,50+(c/50)*50)); needle.style.left=pct+"%"; tunNeed.style.left=pct+"%"; tunCentNum.textContent=`${Math.round(c)}c`; };
+
+function freqToNoteName(f){
+  if(!f||!isFinite(f)) return {name:"—",oct:"-"};
+  const m = Math.round(12*Math.log2(f/442) + 57);
+  const names = ["C","C#","D","D#","E","F","F#","G","G#","A","A#","B"];
+  const name = names[(m+1200)%12]; const oct = Math.floor(m/12) - 1;
+  return {name, oct};
+}
+
+function sparks(){
+  const cv=fxCanvas, ctx=cv.getContext("2d");
+  if(!cv.width||!cv.height){ const wrap=document.getElementById("staff-wrap"); cv.width=wrap.clientWidth; cv.height=wrap.clientHeight; }
+  const N=90, P=[];
+  for(let i=0;i<N;i++){ const a=Math.random()*Math.PI*2, sp=2.2+Math.random()*2.6; P.push({x:cv.width*0.5,y:cv.height*0.42, vx:Math.cos(a)*sp, vy:Math.sin(a)*sp, life:0, hue:120+Math.random()*80}); }
+  let t0=performance.now();
+  function step(now){
+    const dt=Math.min(32, now-t0)/1000; t0=now;
+    ctx.clearRect(0,0,cv.width,cv.height);
+    P.forEach(p=>{ p.life+=dt; p.vy+=2.8*dt; p.x+=p.vx; p.y+=p.vy;
+      const a=Math.max(0,1-p.life/0.7); ctx.fillStyle=`hsla(${p.hue} 80% 60% / ${a})`; ctx.beginPath(); ctx.arc(p.x,p.y,2,0,Math.PI*2); ctx.fill(); });
+    if(P[0].life<0.7) requestAnimationFrame(step); else ctx.clearRect(0,0,cv.width,cv.height);
+  }
+  requestAnimationFrame(step);
+  if(navigator.vibrate) try{ navigator.vibrate(12); }catch{}
+}
+
+function setProg(idx,len){
+  const phase = (idx<24) ? "（上行）" : "（下行）";
+  prog.textContent = `音 ${idx+1}/${len}${phase}`;
+}
+
+let session=null, pageReady=false;
+
+async function resetSession(key){
+  // 1) 即時用のデータ準備
+  const sc = makeMajorScale3Oct(key);
+  const vex = toVexKeys(sc.notes, key);
+  session={
+    key, notes:sc.notes, vex,
+    idx:0, pass:parseInt(selPass.value,10)||90,
+    results:Array(sc.notes.length).fill(null),
+    page:0, perPage:24, advancedAt:0,
+    lockTill:0, stableMs:0
+  };
+  setProg(session.idx, session.notes.length);
+  advice.textContent="待機中…"; advice.style.color="#ffccd5"; bigScore.textContent="0";
+
+  // 2) VexFlow待機 → 失敗してもポーリングで再試行
+  pageReady = await waitVexFlow(4000);
+  if(pageReady){
+    pageCtx = renderPage({key:session.key, vexKeys:session.vex, page:session.page, perPage:session.perPage});
+    if(pageCtx) recolorPage(pageCtx, 0);
+  }
+  if(!renderPoll){
+    renderPoll = setInterval(()=>{
+      if(!pageCtx && window.Vex?.Flow){
+        pageReady=true;
+        pageCtx = renderPage({key:session.key, vexKeys:session.vex, page:session.page, perPage:session.perPage});
+        if(pageCtx) recolorPage(pageCtx, 0);
+        clearInterval(renderPoll); renderPoll=null;
+      }
+    }, 120);
+  }
+}
+
+function turnPageIfNeeded(){
+  if(!pageReady) return;
+  const newPage = Math.floor(session.idx/session.perPage);
+  if(newPage !== session.page){
+    session.page = newPage;
+    pageCtx = renderPage({key:session.key, vexKeys:session.vex, page:session.page, perPage:session.perPage});
+  }
+}
+
+function advance(){
+  if(session.idx < session.notes.length-1){
+    session.idx += 1;
+    session.stableMs = 0;
+    turnPageIfNeeded();
+    if(pageCtx) recolorPage(pageCtx, session.idx % session.perPage, session.results[session.idx]);
+    setProg(session.idx, session.notes.length);
+  }
+}
+
+let lastTime=performance.now();
+function loop(){
+  const now=performance.now();
+  const dt = now - lastTime; lastTime = now;
+
+  const {freq,rms,db}=detectPitch();
+  if(freq>0 && session){
+    const near = freqToNoteName(freq);
+    tunNote.textContent = near.name; tunOct.textContent = near.oct;
+
+    const n=session.notes[session.idx];
+    const target=letterFreq(n.letter, n.octave, session.key);
+    const c=centsFrom(freq,target);
+    const sc=scoreFromCents(c);
+    bigScore.textContent=Math.round(sc);
+    drawCents(Math.max(-50,Math.min(50,c)));
+
+    const abs=Math.abs(c);
+    if(abs>50){ advice.textContent="頑張ろう！"; advice.style.color="#ffccd5"; session.stableMs=0; }
+    else if(abs>15){ advice.textContent=(c>0?`${abs|0}c 高い`:`${abs|0}c 低い`); advice.style.color="#ffd166"; session.stableMs=0; }
+    else { advice.textContent="いい感じ！"; advice.style.color="#c7ffd1"; }
+
+    // 0.5秒安定保持で合格
+    if(abs <= 15){
+      session.stableMs += dt;
+      session.results[session.idx] = Math.max(session.results[session.idx]||0, Math.round(sc));
+      if(pageCtx) recolorPage(pageCtx, session.idx % session.perPage, session.results[session.idx]);
+      if(session.stableMs >= 500 && (session.results[session.idx] >= session.pass)){
+        session.lockTill = now + 180;
+        sparks();
+        advance();
+      }
+    }else{
+      session.stableMs = 0;
+    }
   }else{
-    await keepAwakeDisable();
-    await stopAudioGraph();
-    stopMetronome();
+    bigScore.textContent="0";
   }
+  if(running) rafId=requestAnimationFrame(loop);
+}
+
+// —— UI —— //
+document.getElementById("permit").addEventListener("click", async ()=>{
+  gate.setAttribute("aria-hidden","true");
+  try{ await openMic(); }catch{ gate.setAttribute("aria-hidden","false"); }
 });
 
-/* ===== ピッチ処理 ===== */
-function centsDiff(f_est,f_tgt){ return 1200*Math.log2(f_est/f_tgt); }
-function scoreFromCents(absC){ const c=Math.min(200,Math.max(0,absC)); return Math.round(100*(1-c/200)); }
-
-function onWorkletMessage(ev){
-  const {f0, conf, rms, now} = ev.data || {};
-  const tNow = now || performance.now();
-
-  // 常時ニードル
-  if(scaleData){
-    const n=scaleData.noteObjs[Math.min(idx, scaleData.noteObjs.length-1)];
-    const fTarget=letterFreq(n.letter,n.octave,scaleData.keySignature,A4_REF_HZ);
-    if(f0){ updateNeedle(centsDiff(f0,fTarget)); }
-  }
-
-  if(!sessionRunning) return;
-
-  if(rms < LEVEL_RMS_THRESHOLD){ adviceEl.className="bad"; adviceEl.textContent='入力が小さいです。'; return; }
-  if(!f0 || conf<0.30){ adviceEl.className="warn"; adviceEl.textContent='検出が不安定…'; return; } // conf閾値を下げてF#取りこぼしを回避
-
-  lastValidTime = tNow;
-
-  const cur=scaleData.noteObjs[idx];
-  const fTarget=letterFreq(cur.letter,cur.octave,scaleData.keySignature,A4_REF_HZ);
-  const cents=centsDiff(f0,fTarget);
-  const absC=Math.abs(cents);
-  const sc=scoreFromCents(absC);
-
-  setAdviceThrottled(cents, sc);
-  colorMini(absC);
-  progEl.textContent=`音 ${idx+1}/${scaleData.noteObjs.length}`;
-
-  if(absC > PASS_BAND_CENTS) mustExitPassBand=false;
-  const inPassBand = absC <= PASS_BAND_CENTS;
-
-  if(sc >= passThreshold && inPassBand && !mustExitPassBand){
-    if(tNow - lastAdvanceTime < COOLDOWN_NEXT_MS) return;
-    if(scores[idx] == null) scores[idx] = sc;
-
-    idx++;
-    lastProgressTime = tNow;
-    lastAdvanceTime = tNow;
-    mustExitPassBand = true;
-
-    if(idx >= scaleData.noteObjs.length){ finishScale(); return; }
-    highlightIndex(renderCtx, idx);
-  }
-}
-
-/* ===== セッション ===== */
-function startSession(){
-  if(!audioReady){ notify('マイク初期化中です。画面をタップして有効化してください。','info',2500); resumeAudio(); return; }
-  sessionRunning=true; document.body.classList.add('running');
-  btnStart.disabled=true; btnStop.disabled=false;
-  passThreshold=+passSel.value;
-  LEVEL_RMS_THRESHOLD = +rmsInput.value;
-
+btnStart.onclick=async ()=>{
   try{
-    scaleData=buildMajorScale(currentKey);
-    renderCtx=renderScale(scaleData.keySignature, scaleData.vexKeys, scaleData.noteObjs);
-    idx=0; scores=[]; lastProgressTime=performance.now(); lastValidTime=0; lastAdvanceTime=0; mustExitPassBand=true;
-    highlightIndex(renderCtx,0);
-    startMetronome();
-  }catch(e){ pushError(e); notify('五線譜の描画に失敗（エラー情報を確認）','error',4000); }
-}
-function stopSession(){
-  sessionRunning=false; document.body.classList.remove('running');
-  btnStart.disabled=false; btnStop.disabled=true;
-  stopMetronome();
-  miniScoreEl.textContent="—"; miniScoreEl.className="";
-  adviceEl.className=""; adviceEl.textContent="停止中";
-  bigScoreEl.textContent="—";
-  progEl.textContent=`音 1/32`;
-}
-function finishScale(){
-  stopMetronome();
-  const passedScores = scores.filter(s=>typeof s==='number');
-  const avg = passedScores.length ? Math.round(passedScores.reduce((a,b)=>a+b,0)/passedScores.length) : 0;
+    if(!mediaStream) await openMic();
+    if(!pageCtx) await resetSession(selKey.value || "G"); // ここで確実に描画準備
+    running=true; btnStart.disabled=true; btnStop.disabled=false; lastTime=performance.now(); loop();
+  }catch(e){ pushErr(e.message||e); showErrorModal(); }
+};
+btnStop.onclick=()=>{ running=false; btnStart.disabled=false; btnStop.disabled=true; if(rafId) cancelAnimationFrame(rafId); closeMic(); };
 
-  const resultEl=document.getElementById('result');
-  const praiseEl=document.getElementById('praise');
-  const detailsEl=document.getElementById('details');
+selKey.addEventListener("change",()=>{ running=false; btnStart.disabled=false; btnStop.disabled=true; if(rafId) cancelAnimationFrame(rafId); resetSession(selKey.value); });
 
-  if(avg>=98) praiseEl.textContent="神懸りの安定感。舞台いけます。";
-  else if(avg>=95) praiseEl.textContent="プロの精度。美しい。";
-  else if(avg>=90) praiseEl.textContent="とても良い音程です！";
-  else praiseEl.textContent="確実に上がっています。継続しましょう。";
-
-  detailsEl.textContent = `合格時スコア平均：${avg} 点（${passedScores.length} / ${scaleData.noteObjs.length} 音）`;
-  resultEl.classList.add('show'); resultEl.setAttribute('aria-hidden','false');
-  document.getElementById('again').onclick=()=>{ resultEl.classList.remove('show'); resultEl.setAttribute('aria-hidden','true'); startSession(); };
-  document.getElementById('close').onclick=()=>{ resultEl.classList.remove('show'); resultEl.setAttribute('aria-hidden','true'); };
-  stopSession();
-}
-
-/* ===== UI ===== */
-(function fillPass(){
-  const sel=passSel; sel.innerHTML="";
-  for(let p=85;p<=100;p++){ const op=document.createElement('option'); op.textContent=String(p); sel.appendChild(op); }
-  sel.value="90";
-})();
-bpmInput.addEventListener('change', ()=>{ const v=Math.max(40,Math.min(200, Math.round((+bpmInput.value)/5)*5)); bpmInput.value=String(v); startMetronome(); });
-metroToggle.addEventListener('change', ()=>{ metroOn=metroToggle.checked; startMetronome(); });
-rmsInput.addEventListener('change', ()=>{ const v=Math.max(0.001,Math.min(0.02, +rmsInput.value)); rmsInput.value=String(v.toFixed(3)); notify(`音量閾値(RMS): ${rmsInput.value}`,'info',1200,true); });
-
-keySelect.addEventListener('change', ()=>{
-  currentKey=keySelect.value;
-  if(!sessionRunning){
-    try{
-      scaleData=buildMajorScale(currentKey);
-      renderCtx=renderScale(scaleData.keySignature, scaleData.vexKeys, scaleData.noteObjs);
-      highlightIndex(renderCtx,0);
-    }catch(e){ pushError(e); }
+window.addEventListener("visibilitychange",()=>{
+  if(document.hidden){
+    running=false; if(rafId) cancelAnimationFrame(rafId); btnStart.disabled=false; btnStop.disabled=true; closeMic();
+  }else{
+    if(!mediaStream){ gate.setAttribute("aria-hidden","false"); }
   }
 });
-btnStart.addEventListener('click', ()=>{ resumeAudio(); startSession(); });
-btnStop.addEventListener('click', stopSession);
+window.addEventListener("pagehide",()=>{ closeMic(); });
+window.addEventListener("resize",()=>{
+  const wrap=document.getElementById("staff-wrap");
+  fxCanvas.width=wrap.clientWidth; fxCanvas.height=wrap.clientHeight;
+  if(pageCtx) recolorPage(pageCtx, session.idx % session.perPage, session.results[session.idx]);
+});
 
-/* ===== 初期化 ===== */
-(async function init(){
-  keepAwakeEnable();
-  try{ await ensureVexFlow(); }catch{}
-  try{
-    currentKey="G"; scaleData=buildMajorScale(currentKey);
-    renderCtx=renderScale(scaleData.keySignature, scaleData.vexKeys, scaleData.noteObjs);
-    highlightIndex(renderCtx,0);
-  }catch(e){ pushError(e); }
-  if(!document.hidden){ await startAudioGraph(); await resumeAudio(); }
-})();
+// 初期：Gメジャー
+resetSession("G");
