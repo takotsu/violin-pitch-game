@@ -1,93 +1,90 @@
-export const ALL_KEYS = ["G","D","A","E","C","F","Bb","Eb","Ab","B","F#","C#"];
+// scales.js
+export const A4 = 442;
+export const KEYS = ["G","D","A","C","F","Bb","Eb","E","B","F#","Ab"];
 
-// 調号
 export const KEY_SIG = {
-  "C":  {sharps:[], flats:[]},
-  "G":  {sharps:["F"], flats:[]},
-  "D":  {sharps:["F","C"], flats:[]},
-  "A":  {sharps:["F","C","G"], flats:[]},
-  "E":  {sharps:["F","C","G","D"], flats:[]},
-  "B":  {sharps:["F","C","G","D","A"], flats:[]},
-  "F#": {sharps:["F","C","G","D","A","E"], flats:[]},
-  "C#": {sharps:["F","C","G","D","A","E","B"], flats:[]},
-  "F":  {sharps:[], flats:["B"]},
-  "Bb": {sharps:[], flats:["B","E"]},
-  "Eb": {sharps:[], flats:["B","E","A"]},
-  "Ab": {sharps:[], flats:["B","E","A","D"]},
+  C:{sharps:[],flats:[]},
+  G:{sharps:["F"],flats:[]},
+  D:{sharps:["F","C"],flats:[]},
+  A:{sharps:["F","C","G"],flats:[]},
+  E:{sharps:["F","C","G","D"],flats:[]},
+  B:{sharps:["F","C","G","D","A"],flats:[]},
+  "F#":{sharps:["F","C","G","D","A","E"],flats:[]},
+  F:{sharps:[],flats:["B"]},
+  Bb:{sharps:[],flats:["B","E"]},
+  Eb:{sharps:[],flats:["B","E","A"]},
+  Ab:{sharps:[],flats:["B","E","A","D"]},
 };
 
-// 自然音 → 半音
 const NAT = {C:0,D:2,E:4,F:5,G:7,A:9,B:11};
+const STEP = [2,2,1,2,2,2,1];
+const LET_SEQ = ["C","D","E","F","G","A","B"];
 
-// バイオリン2オクターブ標準開始音（1st〜3rdポジ想定）
-const START = {
-  "G":  {letter:"G",oct:3},
-  "D":  {letter:"D",oct:4},
-  "A":  {letter:"A",oct:3},
-  "E":  {letter:"E",oct:4},
-  "C":  {letter:"C",oct:4},
-  "F":  {letter:"F",oct:4},
-  "Bb": {letter:"B",oct:3}, // 調号でB♭
-  "Eb": {letter:"E",oct:4}, // 調号でE♭
-  "Ab": {letter:"A",oct:3}, // 調号でA♭
-  "B":  {letter:"B",oct:3},
-  "F#": {letter:"F",oct:3}, // 調号でF♯
-  "C#": {letter:"C",oct:4}, // 調号でC♯
-};
-
-// 文字列回転（CDEFGAB）
-const LETTERS = ["C","D","E","F","G","A","B"];
-function rotateFrom(letter){
-  const i = LETTERS.indexOf(letter);
-  return [...LETTERS.slice(i), ...LETTERS.slice(0,i)];
+function tonicLetter(key){
+  const map={C:"C",G:"G",D:"D",A:"A",E:"E",B:"B","F#":"F",F:"F",Bb:"B",Eb:"E",Ab:"A"};
+  return map[key]||"C";
 }
 
-// 2オクターブ上行（16音：出発→15ステップで頂点を含む）
-function buildUp(tonicLetter, startOct){
-  const seq = rotateFrom(tonicLetter);
-  const out = [];
-  let o = startOct;
-  for(let i=0;i<16;i++){
-    const L = seq[i%7];
-    // B→C でオクターブ繰上げ
-    if(i>0 && seq[(i-1)%7]==="B" && L==="C") o++;
-    out.push({letter:L, octave:o});
-  }
-  return out;
-}
-
-// 2オクターブ下行（16音）：頂点から下る
-function buildDown(upArr){
-  const top = upArr[upArr.length-1];
-  const seq = rotateFrom(upArr[0].letter);
-  // 上行最終音から逆順で16音
-  const down = [];
-  let o = top.octave;
-  // 開始はトップ音
-  down.push({...top});
-  // 残り15音を逆順で
-  for(let i=15;i>=1;i--){
-    const prevL = seq[(i-1)%7];
-    // C→B でオクターブ繰下げ
-    if(i<15 && seq[i%7]==="C" && prevL==="B") o--;
-    down.push({letter:prevL, octave:o});
-  }
-  return down;
-}
-
-export function buildMajorScale(key){
-  const st = START[key] || START["G"];
-  const up = buildUp(st.letter, st.oct);
-  const down = buildDown(up);
-  const vexKeys = [...up, ...down].map(n=>`${n.letter}/${n.octave}`);
-  return { id:key, keySignature:key, vexKeys, noteObjs:[...up, ...down] };
-}
-
-export function letterFreq(letter, octave, key, a4=442){
+export function letterFreq(letter, octave, key, a4=A4){
   const sig = KEY_SIG[key] || KEY_SIG["C"];
   let semi = NAT[letter];
-  if(Array.isArray(sig.sharps) && sig.sharps.includes(letter)) semi += 1;
-  if(Array.isArray(sig.flats)  && sig.flats.includes(letter))  semi -= 1;
-  const n = (octave-4)*12 + (semi-9); // A4=442
+  if(sig.sharps.includes(letter)) semi += 1;
+  if(sig.flats.includes(letter)) semi -= 1;
+  const n = (octave-4)*12 + (semi-9); // A4基準
   return a4 * Math.pow(2, n/12);
+}
+
+function nextDegree(letter){ return LET_SEQ[(LET_SEQ.indexOf(letter)+1)%7]; }
+
+/* 3oct長音階（48音）を G3..E7 に必ず収める（最後に境界内へシフト補正） */
+export function makeMajorScale3Oct(key){
+  const startLetter = tonicLetter(key);
+  let chosenStartOct = 3;
+  for(let so=3; so<=5; so++){
+    const up=[{letter:startLetter,octave:so}];
+    let L=startLetter, oct=so;
+    for(let i=0;i<23;i++){
+      const nextL = nextDegree(L);
+      if(L==="B" && nextL==="C") oct+=1;
+      L=nextL; up.push({letter:L,octave:oct});
+    }
+    const seq=[...up, ...up.slice().reverse()];
+    if(inRange(seq,key)){ chosenStartOct=so; break; }
+  }
+  let up=[{letter:startLetter,octave:chosenStartOct}], L=startLetter, oct=chosenStartOct;
+  for(let i=0;i<23;i++){ const nL=nextDegree(L); if(L==="B"&&nL==="C") oct+=1; L=nL; up.push({letter:L,octave:oct}); }
+  let seq=[...up, ...up.slice().reverse()];
+  seq = fitIntoRange(seq,key); // 最終安全
+  return seq;
+}
+
+function inRange(seq,key){
+  const G3=letterFreq("G",3,"C"), E7=letterFreq("E",7,"C");
+  let min=Infinity,max=0;
+  for(const n of seq){ const f=letterFreq(n.letter,n.octave,key); if(f<min)min=f; if(f>max)max=f; }
+  return (min>=G3-1e-6 && max<=E7+1e-6);
+}
+function fitIntoRange(seq,key){
+  const G3=letterFreq("G",3,"C"), E7=letterFreq("E",7,"C");
+  function bounds(s){ let mn=Infinity,mx=0; for(const n of s){ const f=letterFreq(n.letter,n.octave,key); if(f<mn)mn=f; if(f>mx)mx=f; } return [mn,mx]; }
+  let [mn,mx]=bounds(seq);
+  while(mn<G3){ seq = seq.map(n=>({...n,octave:n.octave+1})); [mn,mx]=bounds(seq); }
+  while(mx>E7){ seq = seq.map(n=>({...n,octave:n.octave-1})); [mn,mx]=bounds(seq); }
+  return seq;
+}
+
+/* 4小節（32音）：上行24 + 下行8 */
+export function makeExercise4Bars(key){
+  const full=makeMajorScale3Oct(key);
+  return [...full.slice(0,24), ...full.slice(24,32)];
+}
+
+/* VexFlowキー配列 */
+export function toVexKeys(noteObjs, key){
+  const sig = KEY_SIG[key] || KEY_SIG["C"];
+  return noteObjs.map(n=>{
+    const base = n.letter.toLowerCase();
+    const acc = sig.sharps.includes(n.letter) ? "#" : (sig.flats.includes(n.letter) ? "b" : "");
+    return `${base}${acc}/${n.octave}`;
+  });
 }

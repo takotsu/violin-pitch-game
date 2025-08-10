@@ -1,338 +1,431 @@
-import { ALL_KEYS, buildMajorScale, letterFreq } from "./scales.js";
-import { renderScale, highlightIndex } from "./score.js";
+// app.js
+import { A4, KEYS, letterFreq, makeExercise4Bars } from "./scales.js";
+import { renderTwoBars } from "./score.js";
 
-/* ===== 設定 ===== */
+/* ===== 定数 ===== */
 const A4_REF_HZ = 442;
-const STUCK_SEC_BEFORE_AUTONEXT = 3;
-const COOLDOWN_NEXT_MS = 220;
+const F_MIN = 110, F_MAX = 2200;
+const VIOLIN_MIN = 196.0; // G3
 const PASS_BAND_CENTS = 15;
+const PASS_DWELL_MS = 100;   // 合格持続（半分）
+const COOL_NEXT_MS = 100;    // 進行クール
+const LOCK_SAME_MS = 140;    // 連続同音ロック
+
+/* ===== UI ===== */
+const adviceEl = document.getElementById('advice');
+const miniScoreEl = document.getElementById('mini-score');
+const bigScoreEl = document.getElementById('big-score');
+const bar = document.getElementById('cents-bar');
+const needleBar = document.getElementById('bar-needle');
+const dbEl = document.getElementById('db-indicator');
+const passSel = document.getElementById('pass');
+const btnStart = document.getElementById('start');
+const btnStop = document.getElementById('stop');
+const keySel = document.getElementById('key-select');
+const rmsInput = document.getElementById('rms');
+const dboffInput = document.getElementById('dboff');
+const progEl = document.getElementById('prog');
+const pageLabel = document.getElementById('page-label');
+const staffWrap = document.getElementById('staff-wrap');
+const sparkCanvas = document.getElementById('spark');
+
+(function initPass(){ for(let p=85;p<=100;p++){ const o=document.createElement('option'); o.textContent=String(p); passSel.appendChild(o); } passSel.value="90"; })();
+
+/* ===== 状態 ===== */
+let currentKey = keySel.value;
+let exercise = null;     // 32音
+let pageOffset = 0;      // 0 / 16
+let idx = 0;             // 0..31
+let scores = [];
+let passThreshold = 90;
+let RMS_TH = 0.0015;
+let DB_OFFSET = 0;
+let sessionRunning = false;
+let renderAPI = null;
+let lastAdvance = 0;
+let inBandSince = 0;
 
 /* ===== エラーログ ===== */
-const errorLog = [];
-function pushError(e){
-  const msg = (e?.message||e)?.toString();
-  const stack = e?.error?.stack || e?.stack || "";
-  const entry = `${new Date().toLocaleString()} : ${msg}\n${stack}`;
-  errorLog.push(entry); renderErrorModal();
+const errorSet = new Set();
+function logError(e){
+  const msg = (e?.message||e)?.toString(); const stack = e?.stack||"";
+  errorSet.add(`${new Date().toISOString()} : ${msg}${stack?("\n"+stack):""}`);
+  renderErrorModal();
 }
-window.addEventListener('error',(ev)=>{ pushError(ev); notify('エラーが発生（詳細を見るをタップ）','error',3500); showErrorModal(); });
-window.addEventListener('unhandledrejection',(ev)=>{ pushError(ev.reason||ev); notify('エラーが発生（詳細を見るをタップ）','error',3500); showErrorModal(); });
-function renderErrorModal(){ const list=document.getElementById('error-list'); if(!list) return; list.innerHTML=""; errorLog.slice(-80).forEach(t=>{ const li=document.createElement('li'); li.textContent=t; list.appendChild(li); }); }
-function showErrorModal(){ const m=document.getElementById('error-modal'); m.classList.add('show'); m.setAttribute('aria-hidden','false'); }
-function hideErrorModal(){ const m=document.getElementById('error-modal'); m.classList.remove('show'); m.setAttribute('aria-hidden','true'); }
-document.getElementById('err-close').onclick=hideErrorModal;
-document.getElementById('err-copy').onclick=async()=>{ await navigator.clipboard.writeText(errorLog.join('\n\n')); notify('エラー内容をコピーしました。','info',2000); };
+const errList = document.getElementById('error-list');
+function renderErrorModal(){ if(!errList) return; errList.innerHTML=""; [...errorSet].slice(-200).forEach(t=>{ const li=document.createElement('li'); li.textContent=t; errList.appendChild(li); }); }
+document.getElementById('err-copy').onclick=async()=>{ await navigator.clipboard.writeText([...errorSet].join("\n")); toast("エラー内容をコピーしました。","info",1800); };
+document.getElementById('err-close').onclick=()=>{ document.getElementById('error-modal').classList.remove('show'); };
 
-/* ===== 通知 ===== */
+/* ===== トースト ===== */
 let toastTimer;
-function notify(msg, level='warn', ms=2500, tiny=false){
+function toast(msg, level='warn', ms=2500, tiny=false){
   const el=document.getElementById('toast');
   el.className=`${level} ${tiny?'tiny':''} show`; el.textContent=msg;
   clearTimeout(toastTimer); toastTimer=setTimeout(()=>el.className=el.className.replace('show',''), ms);
 }
 
-/* ===== Wake Lock ===== */
-let wakeLock = null;
-const nosleepVideo = document.getElementById('nosleep');
-async function keepAwakeEnable(){
-  try{
-    if('wakeLock' in navigator){
-      wakeLock = await navigator.wakeLock.request('screen');
-      wakeLock.addEventListener('release', ()=>{});
-    }else{
-      if(nosleepVideo && nosleepVideo.paused){ await nosleepVideo.play().catch(()=>{}); }
-    }
-  }catch{}
-}
-async function keepAwakeDisable(){
-  try{ if(wakeLock){ await wakeLock.release(); wakeLock=null; } }catch{}
-  try{ if(nosleepVideo && !nosleepVideo.paused){ nosleepVideo.pause(); } }catch{}
+/* ===== 2小節描画 ===== */
+function drawPage(){
+  renderAPI = renderTwoBars({ key: currentKey, notes: exercise, offset: pageOffset });
+  sparkCanvas.width = staffWrap.clientWidth; sparkCanvas.height = staffWrap.clientHeight;
 }
 
-/* ===== VexFlow ===== */
-async function ensureVexFlow(){
-  if(window.Vex?.Flow) return true;
-  const cdns = [
-    "https://cdn.jsdelivr.net/npm/vexflow@3.0.9/build/vexflow-min.js",
-    "https://unpkg.com/vexflow@3.0.9/build/vexflow-min.js"
-  ];
-  for(const url of cdns){
-    try{ await loadScript(url, 7000); if(window.Vex?.Flow) return true; }
-    catch(e){ pushError(new Error(`VexFlow load fail: ${url}`)); }
+/* ===== 視覚フィードバック：火花 + ハロ（半透明円） ===== */
+const spk = sparkCanvas.getContext('2d');
+let sparks=[], halos=[];
+function spawnSpark(x,y){
+  const N=28;
+  for(let i=0;i<N;i++){
+    const a = (Math.PI*2)*Math.random(), v = 80+90*Math.random();
+    sparks.push({x,y, vx:Math.cos(a)*v, vy:Math.sin(a)*v, life:300, t:0});
   }
-  pushError(new Error("VexFlowをCDNから読み込めませんでした。フォールバック描画に切り替えます。"));
-  return false;
+  halos.push({x,y, r0:6, r1:48, t:0, life:260});
 }
-function loadScript(src, timeoutMs=7000){
-  return new Promise((res,rej)=>{
-    const s=document.createElement('script'); s.src=src; s.crossOrigin="anonymous"; s.referrerPolicy="no-referrer";
-    const to=setTimeout(()=>{ s.remove(); rej(new Error("timeout")); }, timeoutMs);
-    s.onload=()=>{ clearTimeout(to); res(); };
-    s.onerror=()=>{ clearTimeout(to); rej(new Error("onerror")); };
-    document.head.appendChild(s);
-  });
+let sparkRAF=null, lastT=performance.now();
+function sparkLoop(t){
+  const dt = Math.min(32, t-lastT); lastT=t;
+  spk.clearRect(0,0,sparkCanvas.width, sparkCanvas.height);
+  spk.globalCompositeOperation="lighter";
+
+  // halo
+  halos = halos.filter(h=>h.t<h.life);
+  for(const h of halos){
+    h.t+=dt; const k=Math.min(1,h.t/h.life);
+    const r = h.r0 + (h.r1-h.r0)*k;
+    spk.globalAlpha = 0.22*(1-k);
+    const grd = spk.createRadialGradient(h.x,h.y,r*0.1, h.x,h.y,r);
+    grd.addColorStop(0,"rgba(34,197,94,0.35)");
+    grd.addColorStop(1,"rgba(34,197,94,0.0)");
+    spk.fillStyle=grd; spk.beginPath(); spk.arc(h.x,h.y,r,0,Math.PI*2); spk.fill();
+  }
+
+  // sparks
+  sparks = sparks.filter(p=>p.t<p.life);
+  for(const p of sparks){
+    p.t+=dt; const k=p.t/p.life;
+    const x=p.x + p.vx*(p.t/1000);
+    const y=p.y + p.vy*(p.t/1000) + 0.0008*(p.t*p.t);
+    spk.globalAlpha = (1-k);
+    spk.beginPath(); spk.arc(x,y, 1.8, 0, Math.PI*2); spk.fillStyle="#22c55e"; spk.fill();
+  }
+  sparkRAF = (sparks.length||halos.length)? requestAnimationFrame(sparkLoop) : null;
+}
+function burstAtNote(iInPage){
+  const p = renderAPI?.getXY(iInPage); if(!p) return;
+  const svgRect = document.querySelector("#staff svg")?.getBoundingClientRect() || staffWrap.getBoundingClientRect();
+  const x = p.x - svgRect.left, y = p.y - svgRect.top;
+  spawnSpark(x,y);
+  if(!sparkRAF){ lastT=performance.now(); sparkRAF = requestAnimationFrame(sparkLoop); }
+  bar.classList.add('flash'); setTimeout(()=>bar.classList.remove('flash'),140);
 }
 
-/* ===== UI ===== */
-const adviceEl=document.getElementById('advice');
-const bigScoreEl=document.getElementById('big-score');
-const miniScoreEl=document.getElementById('mini-score');
-const needleEl=document.getElementById('needle');
-const passSel=document.getElementById('pass');
-const btnStart=document.getElementById('start');
-const btnStop=document.getElementById('stop');
-const bpmInput=document.getElementById('bpm');
-const metroLed=document.getElementById('metro-led');
-const metroToggle=document.getElementById('metroToggle');
-const keySelect=document.getElementById('key-select');
-const rmsInput=document.getElementById('rms');
-const progEl=document.getElementById('prog');
+/* ===== オーディオ ===== */
+let ac=null, mediaStream=null, source=null, hpf=null, peak=null, analyser=null;
+let rafPitch=null, rafServo=null;
 
-/* ===== 状態 ===== */
-let renderCtx=null, scaleData=null;
-let currentKey="G";
-let passThreshold=90;
-let LEVEL_RMS_THRESHOLD = 0.002;
-let sessionRunning=false;
-let idx=0;
-let lastProgressTime=0;
-let lastValidTime=0;
-let lastAdvanceTime=0;
-let mustExitPassBand=false;
-let scores=[];
-
-/* ===== 表示 ===== */
-function colorMini(diffAbs){
-  miniScoreEl.className="";
-  if(diffAbs<=5) miniScoreEl.classList.add('green'), miniScoreEl.textContent="◎";
-  else if(diffAbs<=15) miniScoreEl.classList.add('yellow'), miniScoreEl.textContent="◯";
-  else miniScoreEl.classList.add('red'), miniScoreEl.textContent="△";
-}
-function updateNeedle(c){ const clamped=Math.max(-50,Math.min(50,c)); const pct=(clamped+50)/100; needleEl.style.left=`calc(${pct*100}% - 1px)`; }
-let lastAdviceTs = 0;
-function setAdviceThrottled(cents, score){
-  const now = performance.now();
-  if(now - lastAdviceTs < 140) return; // 更新頻度を下げる
-  lastAdviceTs = now;
-  const abs=Math.abs(cents);
-  const arrow = cents>0 ? "↑" : (cents<0 ? "↓" : "＝");
-  const text = `${(abs|0)}c ${arrow}`;
-  adviceEl.className="";
-  if(abs<=5){ adviceEl.classList.add('good'); adviceEl.textContent = text+"（そのまま）"; }
-  else if(abs<=20){ adviceEl.classList.add('warn'); adviceEl.textContent = text+"（微調整）"; }
-  else { adviceEl.classList.add('bad'); adviceEl.textContent = text+"（思い切って修正）"; }
-  bigScoreEl.textContent = `${score}`;
-}
-
-/* ===== メトロノーム ===== */
-let metroTimer=null, metroOn=false, beat=0;
-let strongPool=[], weakPool=[], poolIdxS=0, poolIdxW=0;
-function makeBeepUrl(freq=2400, durMs=120, sr=44100){
-  const len=Math.floor(sr*durMs/1000), wavLen=44+len*2;
-  const buf=new ArrayBuffer(wavLen); const dv=new DataView(buf);
-  const wrStr=(o,s)=>{ for(let i=0;i<s.length;i++) dv.setUint8(o+i,s.charCodeAt(i)); };
-  wrStr(0,"RIFF"); dv.setUint32(4,wavLen-8,true); wrStr(8,"WAVE"); wrStr(12,"fmt "); dv.setUint32(16,16,true);
-  dv.setUint16(20,1,true); dv.setUint16(22,1,true); dv.setUint32(24,sr,true); dv.setUint32(28,sr*2,true);
-  dv.setUint16(32,2,true); dv.setUint16(34,16,true); wrStr(36,"data"); dv.setUint32(40,len*2,true);
-  let off=44; for(let i=0;i<len;i++){ const t=i/sr; const env=Math.exp(-6*i/len); const s=Math.sign(Math.sin(2*Math.PI*freq*t))*0.98*env; dv.setInt16(off, s*32767, true); off+=2; }
-  return URL.createObjectURL(new Blob([buf], {type:"audio/wav"}));
-}
-function initBeepPool(){
-  const urlS=makeBeepUrl(2500,120); const urlW=makeBeepUrl(1700,100);
-  strongPool=Array.from({length:8},()=>{const a=new Audio(urlS); a.preload="auto"; a.playsInline=true; a.volume=1.0; return a;});
-  weakPool  =Array.from({length:8},()=>{const a=new Audio(urlW); a.preload="auto"; a.playsInline=true; a.volume=1.0; return a;});
-}
-function playBeep(strong=false){ const pool=strong?strongPool:weakPool; const a=pool[strong?(poolIdxS++%pool.length):(poolIdxW++%pool.length)]; a.currentTime=0; a.play().catch(()=>{}); }
-function startMetronome(){
-  if(metroTimer) clearInterval(metroTimer);
-  if(!metroOn || !sessionRunning) return;
-  const bpm=+bpmInput.value, beatMs=60_000/bpm; beat=0;
-  metroTimer=setInterval(()=>{
-    playBeep(beat%4===0);
-    metroLed.style.background="#22c55e";
-    setTimeout(()=>metroLed.style.background="#334155",120);
-    if((beat%4===0) && sessionRunning){
-      const now=performance.now();
-      if(now - lastProgressTime > STUCK_SEC_BEFORE_AUTONEXT*1000 && now - lastValidTime < 1200){
-        idx = Math.min(idx+1, scaleData.noteObjs.length);
-        if(idx >= scaleData.noteObjs.length){ finishScale(); }
-        else { highlightIndex(renderCtx, idx); progEl.textContent=`音 ${idx+1}/${scaleData.noteObjs.length}`; lastProgressTime=now; mustExitPassBand=true; }
-      }
-    }
-    beat++;
-  }, beatMs);
-}
-function stopMetronome(){ if(metroTimer) clearInterval(metroTimer); metroTimer=null; }
-
-/* ===== Audio ===== */
-let ac, workletNode, mic, analyser, mediaStream=null, audioReady=false;
-async function startAudioGraph(){
-  if(audioReady) return;
+async function startAudio(){
+  if(document.visibilityState!=="visible"){ toast("非可視状態では開始できません。","warn",2000); return; }
   try{
-    ac=new (window.AudioContext||window.webkitAudioContext)({latencyHint:"interactive"});
-    await ac.audioWorklet.addModule('./pitch-worklet.js');
+    if(!navigator.mediaDevices?.getUserMedia) throw new Error("getUserMedia未対応");
+    ac = new (window.AudioContext||window.webkitAudioContext)({latencyHint:"interactive"});
     mediaStream = await navigator.mediaDevices.getUserMedia({
       audio:{ echoCancellation:false, noiseSuppression:false, autoGainControl:false, channelCount:1 }
     });
-    mic=ac.createMediaStreamSource(mediaStream);
-    analyser=ac.createAnalyser(); analyser.fftSize=2048;
-    workletNode=new AudioWorkletNode(ac,'pitch-detector',{numberOfInputs:1,numberOfOutputs:0});
-    workletNode.port.onmessage=onWorkletMessage;
-    mic.connect(analyser); mic.connect(workletNode);
-    initBeepPool();
-    audioReady=true;
-  }catch(e){ pushError(e); notify('マイク初期化に失敗。エラー情報を確認してください。','error',5000); }
+    source = ac.createMediaStreamSource(mediaStream);
+    hpf = ac.createBiquadFilter(); hpf.type="highpass"; hpf.frequency.value=90; hpf.Q.value=0.7;
+    peak = ac.createBiquadFilter(); peak.type="peaking"; peak.frequency.value=2500; peak.Q.value=1.0; peak.gain.value=5;
+    analyser = ac.createAnalyser(); analyser.fftSize=2048;
+    source.connect(hpf); hpf.connect(peak); peak.connect(analyser);
+    startLoops();
+  }catch(e){ logError(e); document.getElementById('error-modal').classList.add('show'); }
 }
-async function stopAudioGraph(){
+async function stopAudio(){
   try{
-    if(workletNode){ try{ workletNode.disconnect(); }catch{} workletNode.port.onmessage=null; workletNode=null; }
-    if(analyser){ try{ analyser.disconnect(); }catch{} analyser=null; }
-    if(mic){ try{ mic.disconnect(); }catch{} mic=null; }
-    if(mediaStream){ try{ mediaStream.getTracks().forEach(t=>t.stop()); }catch{} mediaStream=null; }
-    if(ac){ try{ await ac.suspend(); }catch{} try{ await ac.close(); }catch{} ac=null; }
-  }finally{ audioReady=false; }
+    stopLoops();
+    if(analyser){ try{ analyser.disconnect(); }catch{} }
+    if(peak){ try{ peak.disconnect(); }catch{} }
+    if(hpf){ try{ hpf.disconnect(); }catch{} }
+    if(source){ try{ source.disconnect(); }catch{} }
+    if(mediaStream){ try{ mediaStream.getTracks().forEach(t=>t.stop()); }catch{} }
+    if(ac){ try{ await ac.suspend(); }catch{} try{ await ac.close(); }catch{} }
+  }finally{ analyser=peak=hpf=source=mediaStream=ac=null; }
 }
-async function resumeAudio(){ try{ if(ac && ac.state!=='running'){ await ac.resume(); } }catch(e){ pushError(e); }}
+/* 同期版（ページ遷移/閉じる対策） */
+function stopAudioSync(){
+  try{
+    if(analyser) try{ analyser.disconnect(); }catch{}
+    if(peak) try{ peak.disconnect(); }catch{}
+    if(hpf) try{ hpf.disconnect(); }catch{}
+    if(source) try{ source.disconnect(); }catch{}
+    if(mediaStream) try{ mediaStream.getTracks().forEach(t=>t.stop()); }catch{}
+    analyser=peak=hpf=source=mediaStream=null;
+    if(ac){ try{ ac.suspend(); }catch{} try{ ac.close(); }catch{} ac=null; }
+  }catch{}
+}
 
-/* 可視・不可視 */
-document.addEventListener('visibilitychange', async()=>{
-  if(!document.hidden){
-    await keepAwakeEnable();
-    if(!audioReady){ await startAudioGraph(); }
-    await resumeAudio();
-  }else{
-    await keepAwakeDisable();
-    await stopAudioGraph();
-    stopMetronome();
+/* ===== ピッチ検出（自己相関＋放物線補間 / ハミング窓） ===== */
+const timeBuf = new Float32Array(2048);
+function hammingInplace(arr){ const N=arr.length; for(let i=0;i<N;i++){ const w=0.54-0.46*Math.cos(2*Math.PI*i/(N-1)); arr[i]*=w; } }
+function autoCorrelateF0(frame, sr){
+  const N = frame.length;
+  let s=0; for(let i=0;i<N;i++){ const v=frame[i]; s += v*v; }
+  const rms = Math.sqrt(s/N); if(rms < 1e-9) return {f0:0, rms};
+  hammingInplace(frame);
+  const tauMin = Math.floor(sr/F_MAX), tauMax = Math.floor(sr/F_MIN);
+  const d = new Float32Array(tauMax+1);
+  for(let tau=tauMin; tau<=tauMax; tau++){ let sum=0; for(let i=0;i<N-tau;i++){ const diff=frame[i]-frame[i+tau]; sum+=diff*diff; } d[tau]=sum; }
+  const cmnd = new Float32Array(tauMax+1); let run=0;
+  for(let tau=tauMin; tau<=tauMax; tau++){ run+=d[tau]; cmnd[tau] = d[tau]*tau/(run||1); }
+  let tauBest=-1, thr=0.12;
+  for(let tau=tauMin+2; tau<tauMax-1; tau++){
+    if(cmnd[tau]<thr && cmnd[tau]<=cmnd[tau-1] && cmnd[tau]<=cmnd[tau+1]){ tauBest=tau; break; }
   }
-});
+  if(tauBest<0){ let mv=1e9,mi=-1; for(let t=tauMin;t<=tauMax;t++){ if(cmnd[t]<mv){ mv=cmnd[t]; mi=t; } } tauBest=mi; }
+  const x0=tauBest-1, x1=tauBest, x2=tauBest+1;
+  const y0=cmnd[x0]??cmnd[x1], y1=cmnd[x1], y2=cmnd[x2]??cmnd[x1];
+  const denom=(y0-2*y1+y2)||1, delta=(y0-y2)/(2*denom);
+  const tauRef=tauBest+delta, f0=sr/tauRef;
+  return {f0:(isFinite(f0)?f0:0), rms};
+}
 
-/* ===== ピッチ処理 ===== */
-function centsDiff(f_est,f_tgt){ return 1200*Math.log2(f_est/f_tgt); }
-function scoreFromCents(absC){ const c=Math.min(200,Math.max(0,absC)); return Math.round(100*(1-c/200)); }
+/* ===== セント・スコア ===== */
+function centsDiff(f, fRef){ return 1200*Math.log2(f/fRef); }
+function scoreFromCents(absC){ return Math.max(0, Math.min(100, Math.round(100 - absC*2))); }
 
-function onWorkletMessage(ev){
-  const {f0, conf, rms, now} = ev.data || {};
-  const tNow = now || performance.now();
+/* ===== アナログ針（2次サーボ） ===== */
+const hand = document.getElementById('hand');
+let servo = {pos:0, vel:0};
+const OMEGA = 11.5, ZETA_BASE=0.78;
+function servoUpdate(targetCents, dt){
+  const e = targetCents - servo.pos; const absE = Math.abs(e);
+  const zInc = (absE<=6)? (0.95 - ZETA_BASE)*(1 - absE/6) : 0;
+  const zeta = ZETA_BASE + zInc;
+  const a = OMEGA*OMEGA*e - 2*zeta*OMEGA*servo.vel;
+  servo.vel += a*dt; servo.pos += servo.vel*dt;
+  servo.pos = Math.max(-50, Math.min(50, servo.pos));
+  const ang = servo.pos * (60/50);
+  hand.setAttribute("transform", `translate(0,60) rotate(${ang})`);
+}
 
-  // 常時ニードル
-  if(scaleData){
-    const n=scaleData.noteObjs[Math.min(idx, scaleData.noteObjs.length-1)];
-    const fTarget=letterFreq(n.letter,n.octave,scaleData.keySignature,A4_REF_HZ);
-    if(f0){ updateNeedle(centsDiff(f0,fTarget)); }
-  }
+/* ===== 針/バー更新 ===== */
+let centsBar = 0, nearestSemiCents = 0;
+let lastServoTS = performance.now();
+function servoLoop(ts){
+  const dt = Math.min(0.05, (ts-lastServoTS)/1000);
+  lastServoTS = ts; servoUpdate(nearestSemiCents, dt);
+  requestAnimationFrame(servoLoop);
+}
+function updateBar(c){
+  const clamped=Math.max(-50,Math.min(50,c));
+  const pct=(clamped+50)/100;
+  needleBar.style.left=`calc(${pct*100}% - 1px)`;
+  bar.classList.toggle("hint-low", clamped<-3);
+  bar.classList.toggle("hint-high", clamped>3);
+}
 
-  if(!sessionRunning) return;
+/* ===== dB表示 ===== */
+function showDB(rms){
+  const db = Math.round(20*Math.log10(Math.max(rms,1e-9)) + 94 + DB_OFFSET);
+  const clipped = clamp(db,0,120);
+  dbEl.textContent = `${clipped} dB`;
+  if(clipped>=80){ dbEl.style.color="#ff9b96"; }
+  else if(clipped>=70){ dbEl.style.color="#ffca76"; }
+  else if(clipped>=40){ dbEl.style.color="#a6ffbf"; }
+  else { dbEl.style.color="#cbd5e1"; }
+}
+function clamp(v,min,max){ return Math.max(min,Math.min(max,v)); }
 
-  if(rms < LEVEL_RMS_THRESHOLD){ adviceEl.className="bad"; adviceEl.textContent='入力が小さいです。'; return; }
-  if(!f0 || conf<0.30){ adviceEl.className="warn"; adviceEl.textContent='検出が不安定…'; return; } // conf閾値を下げてF#取りこぼしを回避
+/* ===== ピッチループ ===== */
+function startLoops(){
+  stopLoops();
+  const sr = ac.sampleRate, buf = timeBuf;
+  (function loop(){
+    if(!analyser){ return; }
+    analyser.getFloatTimeDomainData(buf);
+    const {f0, rms} = autoCorrelateF0(buf, sr);
+    showDB(rms);
 
-  lastValidTime = tNow;
+    if(rms < RMS_TH){
+      adviceEl.className="bad"; adviceEl.textContent="入力が小さいです。";
+      updateBar(0); nearestSemiCents=0; inBandSince=0;
+      rafPitch = requestAnimationFrame(loop); return;
+    }
+    if(f0<=0){ adviceEl.className="warn"; adviceEl.textContent="検出が不安定…"; rafPitch=requestAnimationFrame(loop); return; }
+    if(f0 < VIOLIN_MIN-2){ adviceEl.className="warn"; adviceEl.textContent="バイオリン音域外（低すぎ）"; updateBar(0); rafPitch=requestAnimationFrame(loop); return; }
 
-  const cur=scaleData.noteObjs[idx];
-  const fTarget=letterFreq(cur.letter,cur.octave,scaleData.keySignature,A4_REF_HZ);
-  const cents=centsDiff(f0,fTarget);
-  const absC=Math.abs(cents);
-  const sc=scoreFromCents(absC);
+    const cur = exercise[idx]; if(!cur){ rafPitch=requestAnimationFrame(loop); return; }
+    const fRef = letterFreq(cur.letter, cur.octave, currentKey, A4_REF_HZ);
+    const cents = centsDiff(f0, fRef), absC = Math.abs(cents), sc = scoreFromCents(absC);
 
-  setAdviceThrottled(cents, sc);
-  colorMini(absC);
-  progEl.textContent=`音 ${idx+1}/${scaleData.noteObjs.length}`;
+    centsBar = clamp(cents, -50, 50);
+    updateBar(centsBar);
 
-  if(absC > PASS_BAND_CENTS) mustExitPassBand=false;
-  const inPassBand = absC <= PASS_BAND_CENTS;
+    const midi = 69 + 12*Math.log2(f0/A4), midiRnd = Math.round(midi);
+    const fSemi = A4 * Math.pow(2, (midiRnd-69)/12);
+    nearestSemiCents = clamp(centsDiff(f0,fSemi), -50, 50);
 
-  if(sc >= passThreshold && inPassBand && !mustExitPassBand){
-    if(tNow - lastAdvanceTime < COOLDOWN_NEXT_MS) return;
-    if(scores[idx] == null) scores[idx] = sc;
+    if(absC>50){ setAdvice("頑張ろう！","bad"); }
+    else if(absC<=15){ setAdvice("いい感じ！","good"); }
+    else { setAdvice(`${absC|0}c ${cents>0?"高い":"低い"}`,"warn"); }
 
-    idx++;
-    lastProgressTime = tNow;
-    lastAdvanceTime = tNow;
-    mustExitPassBand = true;
+    miniScore(absC);
+    bigScoreEl.textContent = String(sc);
 
-    if(idx >= scaleData.noteObjs.length){ finishScale(); return; }
-    highlightIndex(renderCtx, idx);
-  }
+    const now = performance.now();
+    if(absC<=PASS_BAND_CENTS){
+      if(!inBandSince) inBandSince = now;
+      if(sc>=passThreshold && now-inBandSince>=PASS_DWELL_MS && now-lastAdvance>=Math.max(COOL_NEXT_MS,LOCK_SAME_MS)){
+        if(scores[idx]==null) scores[idx]=sc;
+        badgeFor(sc); advance(); lastAdvance=now; inBandSince=0;
+      }
+    }else{ inBandSince=0; }
+
+    rafPitch = requestAnimationFrame(loop);
+  })();
+
+  lastServoTS = performance.now();
+  rafServo = requestAnimationFrame(servoLoop);
+}
+function stopLoops(){ if(rafPitch){ cancelAnimationFrame(rafPitch); rafPitch=null; } if(rafServo){ cancelAnimationFrame(rafServo); rafServo=null; } }
+
+/* ===== UI ===== */
+function setAdvice(t, cls){ adviceEl.className=cls; adviceEl.textContent=t; }
+function miniScore(absC){
+  miniScoreEl.className="";
+  if(absC<=5){ miniScoreEl.classList.add('green'); miniScoreEl.textContent="◎"; }
+  else if(absC<=15){ miniScoreEl.classList.add('yellow'); miniScoreEl.textContent="◯"; }
+  else { miniScoreEl.classList.add('red'); miniScoreEl.textContent="△"; }
+}
+
+/* ===== 進行 ===== */
+function updateProgress(){
+  progEl.textContent = `音 ${idx+1}/32`;
+  const page = pageOffset===0 ? "1–2" : "3–4";
+  pageLabel.textContent = `小節 ${page}`;
+  const iInPage = idx - pageOffset;
+  for(let j=0;j<16;j++){ renderAPI.recolor(j, (j===iInPage)?"note-target":"note-normal"); }
+}
+function badgeFor(sc){
+  const iInPage = idx - pageOffset;
+  if(sc>=95){ renderAPI.badge(iInPage,"◎"); }
+  else if(sc>=90){ renderAPI.badge(iInPage,"◯"); }
+  else{ renderAPI.recolor(iInPage,"note-failed"); renderAPI.badge(iInPage,"×"); }
+  burstAtNote(iInPage);
+}
+function advance(){
+  idx++; if(idx===16){ pageOffset=16; drawPage(); }
+  if(idx>=32){ finish(); return; }
+  updateProgress();
 }
 
 /* ===== セッション ===== */
 function startSession(){
-  if(!audioReady){ notify('マイク初期化中です。画面をタップして有効化してください。','info',2500); resumeAudio(); return; }
   sessionRunning=true; document.body.classList.add('running');
-  btnStart.disabled=true; btnStop.disabled=false;
-  passThreshold=+passSel.value;
-  LEVEL_RMS_THRESHOLD = +rmsInput.value;
+  passThreshold=+passSel.value|0; RMS_TH=+rmsInput.value; DB_OFFSET=(+dboffInput.value)|0;
 
-  try{
-    scaleData=buildMajorScale(currentKey);
-    renderCtx=renderScale(scaleData.keySignature, scaleData.vexKeys, scaleData.noteObjs);
-    idx=0; scores=[]; lastProgressTime=performance.now(); lastValidTime=0; lastAdvanceTime=0; mustExitPassBand=true;
-    highlightIndex(renderCtx,0);
-    startMetronome();
-  }catch(e){ pushError(e); notify('五線譜の描画に失敗（エラー情報を確認）','error',4000); }
+  exercise = makeExercise4Bars(currentKey);
+  pageOffset=0; idx=0; scores=[]; inBandSince=0;
+  drawPage(); updateProgress();
 }
-function stopSession(){
+function stopSessionUI(){
   sessionRunning=false; document.body.classList.remove('running');
-  btnStart.disabled=false; btnStop.disabled=true;
-  stopMetronome();
-  miniScoreEl.textContent="—"; miniScoreEl.className="";
-  adviceEl.className=""; adviceEl.textContent="停止中";
-  bigScoreEl.textContent="—";
-  progEl.textContent=`音 1/32`;
+  bigScoreEl.textContent="—"; miniScoreEl.textContent="—"; miniScoreEl.className=""; setAdvice("停止中","");
 }
-function finishScale(){
-  stopMetronome();
-  const passedScores = scores.filter(s=>typeof s==='number');
-  const avg = passedScores.length ? Math.round(passedScores.reduce((a,b)=>a+b,0)/passedScores.length) : 0;
 
+/* ===== 完了（褒める） ===== */
+function finish(){
+  stopSessionUI();
+  const passed = scores.filter(v=>typeof v==="number");
+  const avg = passed.length? Math.round(passed.reduce((a,b)=>a+b,0)/passed.length) : 0;
   const resultEl=document.getElementById('result');
-  const praiseEl=document.getElementById('praise');
-  const detailsEl=document.getElementById('details');
-
-  if(avg>=98) praiseEl.textContent="神懸りの安定感。舞台いけます。";
-  else if(avg>=95) praiseEl.textContent="プロの精度。美しい。";
-  else if(avg>=90) praiseEl.textContent="とても良い音程です！";
-  else praiseEl.textContent="確実に上がっています。継続しましょう。";
-
-  detailsEl.textContent = `合格時スコア平均：${avg} 点（${passedScores.length} / ${scaleData.noteObjs.length} 音）`;
+  const praise=document.getElementById('praise');
+  const details=document.getElementById('details');
+  if(avg>=98) praise.textContent="神懸りの安定感。";
+  else if(avg>=95) praise.textContent="プロレベルの精度。";
+  else if(avg>=90) praise.textContent="とても良い音程です。";
+  else praise.textContent="着実に上達しています。";
+  details.textContent=`合格時スコア平均：${avg} 点（${passed.length} / 32 音）`;
   resultEl.classList.add('show'); resultEl.setAttribute('aria-hidden','false');
-  document.getElementById('again').onclick=()=>{ resultEl.classList.remove('show'); resultEl.setAttribute('aria-hidden','true'); startSession(); };
-  document.getElementById('close').onclick=()=>{ resultEl.classList.remove('show'); resultEl.setAttribute('aria-hidden','true'); };
-  stopSession();
+  document.getElementById('again').onclick=()=>{ resultEl.classList.remove('show'); startSession(); };
+  document.getElementById('close').onclick=()=>{ resultEl.classList.remove('show'); };
 }
 
-/* ===== UI ===== */
-(function fillPass(){
-  const sel=passSel; sel.innerHTML="";
-  for(let p=85;p<=100;p++){ const op=document.createElement('option'); op.textContent=String(p); sel.appendChild(op); }
-  sel.value="90";
-})();
-bpmInput.addEventListener('change', ()=>{ const v=Math.max(40,Math.min(200, Math.round((+bpmInput.value)/5)*5)); bpmInput.value=String(v); startMetronome(); });
-metroToggle.addEventListener('change', ()=>{ metroOn=metroToggle.checked; startMetronome(); });
-rmsInput.addEventListener('change', ()=>{ const v=Math.max(0.001,Math.min(0.02, +rmsInput.value)); rmsInput.value=String(v.toFixed(3)); notify(`音量閾値(RMS): ${rmsInput.value}`,'info',1200,true); });
+/* ===== ゲート・ライフサイクル ===== */
+const gate = document.getElementById('gate');
+window.__permit = async function(){
+  gate.classList.remove('show'); gate.setAttribute('aria-hidden','true');
+  try{ await startAudio(); }catch(e){ logError(e); }
+};
 
-keySelect.addEventListener('change', ()=>{
-  currentKey=keySelect.value;
-  if(!sessionRunning){
-    try{
-      scaleData=buildMajorScale(currentKey);
-      renderCtx=renderScale(scaleData.keySignature, scaleData.vexKeys, scaleData.noteObjs);
-      highlightIndex(renderCtx,0);
-    }catch(e){ pushError(e); }
-  }
+btnStart.addEventListener('click', async()=>{
+  try{
+    if(!ac){ await startAudio(); if(!ac){ toast("マイク許可が必要です。","warn",2000); return; } }
+    if(ac?.state==="suspended") await ac.resume();
+    startSession(); keepAwake(true);
+    btnStart.disabled=true; btnStop.disabled=false;
+  }catch(e){ logError(e); toast("開始に失敗しました。","error",2500); }
 });
-btnStart.addEventListener('click', ()=>{ resumeAudio(); startSession(); });
-btnStop.addEventListener('click', stopSession);
+btnStop.addEventListener('click', async()=>{
+  try{
+    stopSessionUI(); btnStart.disabled=false; btnStop.disabled=true;
+    await stopAudio(); keepAwake(false);
+  }catch(e){ logError(e); }
+});
+keySel.addEventListener('change', ()=>{
+  currentKey = keySel.value;
+  if(!sessionRunning){ exercise = makeExercise4Bars(currentKey); pageOffset=0; idx=0; drawPage(); updateProgress(); }
+});
+rmsInput.addEventListener('change', ()=>{ const v = clamp(+rmsInput.value, 0.0005, 0.02); rmsInput.value=String(v.toFixed(4)); toast(`RMS閾値: ${rmsInput.value}`,'info',1200,true); });
+dboffInput.addEventListener('change', ()=>{ const v = clamp((+dboffInput.value)|0, -20, 20); dboffInput.value=String(v); DB_OFFSET=v; toast(`dB補正: ${v} dB`,'info',1200,true); });
+
+/* ===== バックグラウンド/遷移で確実停止（iOS/Safari対策） ===== */
+async function hardStop(){
+  try{
+    stopSessionUI(); btnStart.disabled=false; btnStop.disabled=true;
+    await stopAudio();
+    gate.classList.add('show'); gate.setAttribute('aria-hidden','false');
+  }catch(e){ logError(e); }
+}
+function hardStopSync(){ // ページ遷移時の同期停止
+  try{ stopSessionUI(); stopLoops(); stopAudioSync(); }catch(e){ }
+}
+["visibilitychange","webkitvisibilitychange","blur","freeze","pagehide"].forEach(ev=>{
+  window.addEventListener(ev, ()=>{ if(document.hidden || ev!=="visibilitychange"){ hardStop(); } }, {passive:true});
+});
+window.addEventListener("beforeunload", hardStopSync, {passive:true});
+window.addEventListener("unload", hardStopSync, {passive:true});
+let visWatch = setInterval(()=>{ if(document.hidden && (ac || mediaStream)){ hardStop(); } }, 900);
+
+/* ===== スリープ抑止（iOS） ===== */
+const nosleep = document.getElementById('nosleep');
+async function keepAwake(on){
+  try{
+    if(on){
+      if('wakeLock' in navigator){ try{ await navigator.wakeLock.request('screen'); }catch{} }
+      else{ try{ await nosleep.play(); }catch{} }
+    }else{ try{ nosleep.pause(); }catch{} }
+  }catch{}
+}
 
 /* ===== 初期化 ===== */
-(async function init(){
-  keepAwakeEnable();
-  try{ await ensureVexFlow(); }catch{}
+(function init(){
+  exercise = makeExercise4Bars(currentKey);
+  drawPage(); updateProgress();
+  requestAnimationFrame(servoLoop);
+  // 全キーの音域チェック（ログに出す）
   try{
-    currentKey="G"; scaleData=buildMajorScale(currentKey);
-    renderCtx=renderScale(scaleData.keySignature, scaleData.vexKeys, scaleData.noteObjs);
-    highlightIndex(renderCtx,0);
-  }catch(e){ pushError(e); }
-  if(!document.hidden){ await startAudioGraph(); await resumeAudio(); }
+    const problems=[];
+    for(const k of KEYS){
+      const ex = makeExercise4Bars(k);
+      const freqs = ex.map(n=>letterFreq(n.letter,n.octave,k));
+      const mn=Math.min(...freqs), mx=Math.max(...freqs);
+      if(mn<196-1e-6 || mx>2637+1e-6) problems.push(k);
+    }
+    if(problems.length){ logError(new Error("音域外キー: "+problems.join(","))); }
+  }catch(e){ logError(e); }
 })();
+
+/* ===== エラー収集 ===== */
+window.addEventListener('error', ev=>{ logError(ev.error||ev.message||ev); document.getElementById('error-modal').classList.add('show'); });
+window.addEventListener('unhandledrejection', ev=>{ logError(ev.reason||ev); document.getElementById('error-modal').classList.add('show'); });
