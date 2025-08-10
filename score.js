@@ -1,151 +1,165 @@
-import { KEY_SIG } from "./scales.js";
+// score.js
+import { KEY_SIG, toVexKeys } from "./scales.js";
 
-const staffDiv = document.getElementById('staff');
+const staffDiv = document.getElementById("staff");
+let cache = null;
 
 function mkSvg(w,h){ const ns="http://www.w3.org/2000/svg"; const s=document.createElementNS(ns,"svg"); s.setAttribute("viewBox",`0 0 ${w} ${h}`); s.setAttribute("width","100%"); s.setAttribute("height","100%"); return s; }
+function line(svg,x1,y1,x2,y2,stroke="#e8eef7",w=1){ const ns="http://www.w3.org/2000/svg"; const l=document.createElementNS(ns,"line"); l.setAttribute("x1",x1); l.setAttribute("y1",y1); l.setAttribute("x2",x2); l.setAttribute("y2",y2); l.setAttribute("stroke",stroke); l.setAttribute("stroke-width",w); svg.appendChild(l); return l; }
 function text(svg,x,y,str,size=12,weight="700",anchor="middle",fill="#a7c7dd"){
   const ns="http://www.w3.org/2000/svg"; const t=document.createElementNS(ns,"text");
   t.setAttribute("x",x); t.setAttribute("y",y); t.setAttribute("fill",fill);
   t.setAttribute("font-size",size); t.setAttribute("font-weight",weight); t.setAttribute("text-anchor",anchor);
   t.setAttribute("font-family",'system-ui,"Noto Music","Bravura","Petaluma",sans-serif'); t.textContent=str; svg.appendChild(t); return t;
 }
-function line(svg,x1,y1,x2,y2,stroke="#e8eef7",w=1){ const ns="http://www.w3.org/2000/svg"; const l=document.createElementNS(ns,"line"); l.setAttribute("x1",x1); l.setAttribute("y1",y1); l.setAttribute("x2",x2); l.setAttribute("y2",y2); l.setAttribute("stroke",stroke); l.setAttribute("stroke-width",w); svg.appendChild(l); return l; }
-function notehead(svg,x,y,fill="#e8eef7",rX=5.8,rY=4.2,rot=-20){ const ns="http://www.w3.org/2000/svg"; const e=document.createElementNS(ns,"ellipse"); e.setAttribute("cx",x); e.setAttribute("cy",y); e.setAttribute("rx",rX); e.setAttribute("ry",rY); e.setAttribute("fill",fill); e.setAttribute("transform",`rotate(${rot},${x},${y})`); svg.appendChild(e); return e; }
-function stem(svg,x,yUp,len=18,stroke="#e8eef7"){ return line(svg,x+7,yUp, x+7, yUp-len, stroke, 1.6); }
+function notehead(svg,x,y,cls="note-normal",rX=5.8,rY=4.2,rot=-20){
+  const ns="http://www.w3.org/2000/svg"; const e=document.createElementNS(ns,"ellipse");
+  e.setAttribute("cx",x); e.setAttribute("cy",y); e.setAttribute("rx",rX); e.setAttribute("ry",rY);
+  e.setAttribute("transform",`rotate(${rot},${x},${y})`); e.setAttribute("class",cls); svg.appendChild(e); return e;
+}
+function stem(svg,x,y,len=22,cls="note-normal"){ const st=line(svg,x+7,y-3,x+7,y-3-len,"#e8eef7",1.6); st.setAttribute("class",cls); return st; }
 
-let fbState = null;
-let VFCache = null;
-
-/* ==== 調号（フォールバック） ==== */
-function renderKeySignature(svg, key, left, staffTop, space){
+function renderKeySignature(svg, key, left, top, space){
   const sig = KEY_SIG[key] || KEY_SIG["C"];
-  if(!sig.sharps.length && !sig.flats.length) return 0;
   const SHARP_POS=[{L:'F',o:5},{L:'C',o:5},{L:'G',o:5},{L:'D',o:5},{L:'A',o:4},{L:'E',o:5},{L:'B',o:4}];
   const FLAT_POS =[{L:'B',o:4},{L:'E',o:5},{L:'A',o:4},{L:'D',o:5},{L:'G',o:4},{L:'C',o:5},{L:'F',o:4}];
   const yFor=(letter,oct)=>{ const seq=["C","D","E","F","G","A","B"]; const idx=(L)=>seq.indexOf(L);
-    const steps=(oct-4)*7 + (idx(letter)-idx("E")); const staffBottom=staffTop+space*4; return staffBottom - (steps*space/2); };
+    const steps=(oct-4)*7 + (idx(letter)-idx("E")); const bottom=top+space*4; return bottom - (steps*space/2); };
   let x=left;
-  const drawSharp=(L,o)=>{ text(svg,x, yFor(L,o)+4, "♯", 18, "800","left","#e8eef7"); x+=10; };
-  const drawFlat =(L,o)=>{ text(svg,x, yFor(L,o)+4, "♭", 18, "800","left","#e8eef7"); x+=10; };
+  const drawSharp=(L,o)=>{ text(svg,x, yFor(L,o)+4, "♯", 18, "800","left","#e8eef7"); x+=12; };
+  const drawFlat =(L,o)=>{ text(svg,x, yFor(L,o)+4, "♭", 18, "800","left","#e8eef7"); x+=12; };
   if(sig.sharps.length){ for(let i=0;i<sig.sharps.length;i++){ const p=SHARP_POS[i]; drawSharp(p.L,p.o); } }
   else if(sig.flats.length){ for(let i=0;i<sig.flats.length;i++){ const p=FLAT_POS[i]; drawFlat(p.L,p.o); } }
   return x-left;
 }
 
-/* ==== 加線 ==== */
-function drawLedgerLines(svg, xi, yi, top, bottom, space, color="#a7c7dd"){
-  const short=16, w=1.2;
-  // 上に飛び出す
-  for(let y=top-space; y>=yi-1; y-=space){
-    line(svg, xi-short/2, y, xi+short/2, y, color, w);
-  }
-  // 下に飛び出す
-  for(let y=bottom+space; y<=yi+1; y+=space){
-    line(svg, xi-short/2, y, xi+short/2, y, color, w);
-  }
-}
-
-/* ==== フォールバック（SVG） 2段描画 ==== */
-function renderFallbackScaleTwoSystems(key, noteObjs, highlightIdx=0){
+function renderFallback({ key, notes16 }){
   staffDiv.innerHTML="";
-  const w=staffDiv.clientWidth||720, h=420; const svg=mkSvg(w,h); staffDiv.appendChild(svg);
+  const w=staffDiv.clientWidth||760, h=staffDiv.clientHeight||360;
 
-  const systems = [
-    {top:30, left:12, right:w-12, notes: noteObjs.slice(0,16)},
-    {top:230, left:12, right:w-12, notes: noteObjs.slice(16,32)}
-  ];
-  const nodes=[];
+  // 高音見切れ防止：先に仮topで試算し、最高音が近ければ下げる
+  let top=70, space=16, left=18, right=w-18, bottom=top+space*4;
+  const yTrial=(L,O,top0)=>{ const seq=["C","D","E","F","G","A","B"]; const idx=(l)=>seq.indexOf(l); const s=(O-4)*7+(idx(L)-idx("E")); return (top0+space*4)-(s*space/2); };
+  let minY=1e9;
+  for(const n of notes16){ const y=yTrial(n.letter,n.octave,top); if(y<minY) minY=y; }
+  if(minY<22){ const delta=22-minY; top+=delta; bottom=top+space*4; } // 余裕22px
 
-  systems.forEach((sys, sIdx)=>{
-    const {top,left,right,notes} = sys;
-    const space=14, bottom=top+space*4;
+  const svg=mkSvg(w,h); staffDiv.appendChild(svg);
+  for(let i=0;i<5;i++) line(svg,left, top+space*i, right, top+space*i, "#e8eef7", 1.2);
 
-    // 五線
-    for(let i=0;i<5;i++) line(svg,left, top+space*i, right, top+space*i, "#e8eef7", 1.2);
+  const ksW = renderKeySignature(svg,key,left+4, top, space);
+  const innerLeft = left+4+ksW+10, innerRight=right-10;
+  const stepX=(innerRight-innerLeft)/16;
+  const bottom2=top+space*4;
+  const yFor=(L,O)=>{ const seq=["C","D","E","F","G","A","B"]; const idx=(l)=>seq.indexOf(l); const s=(O-4)*7+(idx(L)-idx("E")); return bottom2-(s*space/2); };
 
-    // 調号（4/4は表示しない）
-    const ksW = renderKeySignature(svg, key, left+22, top, space);
-    const innerLeft = left+22+ksW+8, innerRight = right-8;
-
-    const stepX = (innerRight-innerLeft)/Math.max(1, notes.length);
-    const yFor=(L,O)=>{ const seq=["C","D","E","F","G","A","B"]; const idx=(l)=>seq.indexOf(l); const s=(O-4)*7 + (idx(L)-idx("E")); return bottom - (s*space/2); };
-
-    notes.forEach((n,i)=>{
-      const xi = innerLeft + stepX*(i+0.5);
-      const yi = yFor(n.letter, n.octave);
-      const gi = sIdx*16 + i;
-      const color = (gi===highlightIdx) ? "#22c55e" : "#e8eef7";
-      // 加線
-      if(yi < top || yi > bottom) drawLedgerLines(svg, xi, yi, top, bottom, space, color);
-      const head=notehead(svg, xi, yi, color); const stm=stem(svg, xi, yi-3, 20, color);
-      nodes[gi] = {head:head, stem:stm};
-      if((i+1)%8===0 && i<notes.length-1){ const bx=innerLeft+stepX*(i+1); line(svg,bx,top,bx,bottom,"#7aa2c1",1.2); }
-    });
+  const nodes=[], anchors=[];
+  notes16.forEach((n,i)=>{
+    const x = innerLeft + stepX*(i+0.5);
+    const y = yFor(n.letter, n.octave);
+    const head = notehead(svg,x,y,"note-normal");
+    stem(svg,x,y,24,"note-normal");
+    if((i+1)%8===0 && i<16) line(svg, innerLeft+stepX*(i+1), top, innerLeft+stepX*(i+1), bottom2, "#7aa2c1",1.2);
+    nodes.push(head); anchors.push({x,y});
+    // 加線（上下）
+    const pos = (bottom2 - y)/(space/2);
+    if(pos<-2){ for(let k=-2;k>=pos; k-=2){ line(svg, x-9, bottom2 + (Math.abs(k)/2-1)*space, x+9, bottom2 + (Math.abs(k)/2-1)*space, "#e8eef7",1.2); } }
+    else if(pos>10){ for(let k=10;k<=pos; k+=2){ line(svg, x-9, top - ((k-10)/2+1)*space, x+9, top - ((k-10)/2+1)*space, "#e8eef7",1.2); } }
   });
 
-  fbState={key, noteObjs, svg, nodes};
-  VFCache=null;
-  return {renderer:null, stave:null, notes:[], nodes};
+  cache={ mode:"svg", svg, nodes, anchors };
+  return api();
 }
 
-/* ==== VexFlow ==== */
-export function renderScale(keySignature, vexKeys, noteObjs=null){
+function renderVex({ key, vexKeys16 }){
+  staffDiv.innerHTML="";
   const VF = window.Vex?.Flow;
-  if(VF){
-    staffDiv.innerHTML="";
-    const renderer = new VF.Renderer(staffDiv, VF.Renderer.Backends.SVG);
-    const w=staffDiv.clientWidth||720, h=420; renderer.resize(w,h);
-    const ctx = renderer.getContext();
+  const renderer = new VF.Renderer(staffDiv, VF.Renderer.Backends.SVG);
+  const w=staffDiv.clientWidth||760, h=staffDiv.clientHeight||360; renderer.resize(w,h);
+  const ctx = renderer.getContext();
 
-    const stave1 = new VF.Stave(10,20,w-20);
-    stave1.addKeySignature(keySignature);
-    stave1.setContext(ctx).draw();
+  const stave = new VF.Stave(14,60,w-28);
+  stave.addKeySignature(key);
+  stave.setContext(ctx).draw();
 
-    const stave2 = new VF.Stave(10,220,w-20);
-    stave2.addKeySignature(keySignature);
-    stave2.setContext(ctx).draw();
+  const notes = vexKeys16.map(k=>new VF.StaveNote({keys:[k],duration:"8",clef:"treble"}));
+  const voice = new VF.Voice({num_beats:16,beat_value:4}).setMode(VF.Voice.Mode.SOFT).addTickables(notes);
+  new VF.Formatter().joinVoices([voice]).format([voice], w-60);
+  voice.draw(ctx,stave);
 
-    const keys1=vexKeys.slice(0,16), keys2=vexKeys.slice(16,32);
-    const makeNotes=(keys)=>keys.map(k=>new VF.StaveNote({keys:[k],duration:"8",clef:"treble"}));
-    const notes1=makeNotes(keys1), notes2=makeNotes(keys2);
-    const voice1=new VF.Voice({num_beats:16,beat_value:4}).setMode(VF.Voice.Mode.SOFT).addTickables(notes1);
-    const voice2=new VF.Voice({num_beats:16,beat_value:4}).setMode(VF.Voice.Mode.SOFT).addTickables(notes2);
-    new VF.Formatter().joinVoices([voice1]).format([voice1], w-40);
-    new VF.Formatter().joinVoices([voice2]).format([voice2], w-40);
-    voice1.draw(ctx,stave1); voice2.draw(ctx,stave2);
-
-    VFCache={renderer, ctx, stave1, stave2, notes:[...notes1,...notes2]};
-    fbState=null;
-    highlightIndex(VFCache, 0);
-    return VFCache;
-  }else{
-    const objs = noteObjs || (vexKeys||[]).map(vk=>{ const m=vk.match(/^([A-G])\/(\d)$/); return {letter:m?m[1]:"A", octave:m?+m[2]:4}; });
-    return renderFallbackScaleTwoSystems(keySignature, objs, 0);
-  }
+  cache={ mode:"vex", VF, renderer, ctx, stave, notes };
+  return api();
 }
 
-export function highlightIndex(renderCtx, idx){
-  const VF = window.Vex?.Flow;
-  if(VF && (VFCache||renderCtx)?.notes?.length){
-    const cache = VFCache || renderCtx;
-    const {renderer, stave1, stave2} = cache;
-    const w=staffDiv.clientWidth||720, h=420; renderer.resize(w,h);
-    const ctx = renderer.getContext(); ctx.clear(); stave1.setContext(ctx).draw(); stave2.setContext(ctx).draw();
+function api(){
+  return {
+    mode: cache.mode,
+    recolor(i, cls){
+      if(cache.mode==="vex"){
+        const n=cache.notes[i]; if(!n) return;
+        const color = cls==="note-target"?"#22c55e":(cls==="note-failed"?"#ef4444":"#e8eef7");
+        n.setStyle({fillStyle:color, strokeStyle:color});
+        cache.ctx.clear(); cache.stave.setContext(cache.ctx).draw();
+        const voice=new cache.VF.Voice({num_beats:16,beat_value:4}).setMode(cache.VF.Voice.Mode.SOFT).addTickables(cache.notes);
+        new cache.VF.Formatter().joinVoices([voice]).format([voice], staffDiv.clientWidth-60);
+        voice.draw(cache.ctx,cache.stave);
+      }else{
+        const el = cache.nodes[i]; if(!el) return;
+        el.setAttribute("class", cls);
+      }
+    },
+    badge(i, symbol){
+      const gId = "badge-layer";
+      let layer = staffDiv.querySelector(`#${gId}`);
+      if(!layer){ const svg = staffDiv.querySelector("svg"); layer = document.createElementNS("http://www.w3.org/2000/svg","g"); layer.setAttribute("id",gId); svg.appendChild(layer); }
+      if(cache.mode==="vex"){
+        const bb = cache.notes[i]?.getBoundingBox(); if(!bb) return;
+        const t=document.createElementNS("http://www.w3.org/2000/svg","text");
+        t.setAttribute("x",bb.getX()+bb.getW()+6); t.setAttribute("y",bb.getY()+6); t.setAttribute("fill","#ffd166");
+        t.setAttribute("font-size","12"); t.setAttribute("font-weight","800"); t.textContent=symbol; layer.appendChild(t);
+      }else{
+        const b = cache.nodes[i]?.getBBox(); if(!b) return;
+        const t=document.createElementNS("http://www.w3.org/2000/svg","text");
+        t.setAttribute("x",b.x+b.width+8); t.setAttribute("y",b.y+6); t.setAttribute("fill","#ffd166");
+        t.setAttribute("font-size","12"); t.setAttribute("font-weight","800"); t.textContent=symbol; layer.appendChild(t);
+      }
+    },
+    getXY(i){
+      if(cache.mode==="vex"){
+        const bb = cache.notes[i]?.getBoundingBox(); if(!bb) return {x:0,y:0};
+        return {x: bb.getX()+bb.getW()/2, y: bb.getY()+bb.getH()/2};
+      }else{
+        const el = cache.nodes[i]; if(!el) return {x:0,y:0};
+        const b = el.getBBox(); return {x:b.x+b.width/2, y:b.y+b.height/2};
+      }
+    }
+  };
+}
 
-    const notes = cache.notes.map((sn,i)=>{
-      const color = (i===idx) ? "#22c55e" : "#e8eef7";
-      sn.setStyle({fillStyle:color, strokeStyle:color});
-      return sn;
-    });
-    const voice1=new window.Vex.Flow.Voice({num_beats:16,beat_value:4}).setMode(window.Vex.Flow.Voice.Mode.SOFT).addTickables(notes.slice(0,16));
-    const voice2=new window.Vex.Flow.Voice({num_beats:16,beat_value:4}).setMode(window.Vex.Flow.Voice.Mode.SOFT).addTickables(notes.slice(16,32));
-    new window.Vex.Flow.Formatter().joinVoices([voice1]).format([voice1], w-40);
-    new window.Vex.Flow.Formatter().joinVoices([voice2]).format([voice2], w-40);
-    voice1.draw(ctx,stave1); voice2.draw(ctx,stave2);
-    VFCache={renderer, ctx, stave1, stave2, notes};
-    return;
+/* 半円針の目盛（5c刻み） */
+(function buildTicks(){
+  const g=document.getElementById("tickset"); if(!g) return;
+  g.innerHTML="";
+  for(let c=-50;c<=50;c+=5){
+    const ang = (c/50)*60 * Math.PI/180;
+    const cx=0, cy=60, R=60;
+    const x1 = cx + Math.sin(ang)*R;
+    const y1 = cy - Math.cos(ang)*R;
+    const len = (c%25===0?10:(c%10===0?7:5));
+    const x2 = cx + Math.sin(ang)*(R-len);
+    const y2 = cy - Math.cos(ang)*(R-len);
+    const l=document.createElementNS("http://www.w3.org/2000/svg","line");
+    l.setAttribute("x1",x1); l.setAttribute("y1",y1);
+    l.setAttribute("x2",x2); l.setAttribute("y2",y2);
+    l.setAttribute("class","tick"+(c%25===0?" major":""));
+    g.appendChild(l);
   }
-  if(fbState?.nodes){
-    fbState.nodes.forEach((n,i)=>{ const c=(i===idx)?"#22c55e":"#e8eef7"; if(!n) return; n.head.setAttribute("fill",c); n.stem.setAttribute("stroke",c); });
-  }
+})();
+
+/* 2小節=16音の描画 */
+export function renderTwoBars({ key, notes, offset=0 }){
+  const slice = notes.slice(offset, offset+16);
+  const vex = toVexKeys(slice, key);
+  const okVex = !!window.Vex?.Flow;
+  return okVex ? renderVex({key, vexKeys16:vex}) : renderFallback({key, notes16:slice});
 }
