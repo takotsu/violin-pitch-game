@@ -1,93 +1,95 @@
-export const ALL_KEYS = ["G","D","A","E","C","F","Bb","Eb","Ab","B","F#","C#"];
+// scales.js v0-4 — A4=442Hz。バイオリン実用音域 G3〜E7 に厳密制限。
+// 小野アンナの3オク長音階（上行24音＋下行24音 = 48音）を、開始オクターブを自動調整して収める。
 
-// 調号
 export const KEY_SIG = {
-  "C":  {sharps:[], flats:[]},
-  "G":  {sharps:["F"], flats:[]},
-  "D":  {sharps:["F","C"], flats:[]},
-  "A":  {sharps:["F","C","G"], flats:[]},
-  "E":  {sharps:["F","C","G","D"], flats:[]},
-  "B":  {sharps:["F","C","G","D","A"], flats:[]},
-  "F#": {sharps:["F","C","G","D","A","E"], flats:[]},
-  "C#": {sharps:["F","C","G","D","A","E","B"], flats:[]},
-  "F":  {sharps:[], flats:["B"]},
-  "Bb": {sharps:[], flats:["B","E"]},
-  "Eb": {sharps:[], flats:["B","E","A"]},
-  "Ab": {sharps:[], flats:["B","E","A","D"]},
+  "C":{sharps:[],flats:[]},
+  "G":{sharps:["F"],flats:[]},
+  "D":{sharps:["F","C"],flats:[]},
+  "A":{sharps:["F","C","G"],flats:[]},
+  "E":{sharps:["F","C","G","D"],flats:[]},
+  "B":{sharps:["F","C","G","D","A"],flats:[]},
+  "F#":{sharps:["F","C","G","D","A","E"],flats:[]},
+  "C#":{sharps:["F","C","G","D","A","E","B"],flats:[]},
+  "F":{flats:["B"],sharps:[]},
+  "Bb":{flats:["B","E"],sharps:[]},
+  "Eb":{flats:["B","E","A"],sharps:[]},
+  "Ab":{flats:["B","E","A","D"],sharps:[]}
 };
 
-// 自然音 → 半音
-const NAT = {C:0,D:2,E:4,F:5,G:7,A:9,B:11};
-
-// バイオリン2オクターブ標準開始音（1st〜3rdポジ想定）
-const START = {
-  "G":  {letter:"G",oct:3},
-  "D":  {letter:"D",oct:4},
-  "A":  {letter:"A",oct:3},
-  "E":  {letter:"E",oct:4},
-  "C":  {letter:"C",oct:4},
-  "F":  {letter:"F",oct:4},
-  "Bb": {letter:"B",oct:3}, // 調号でB♭
-  "Eb": {letter:"E",oct:4}, // 調号でE♭
-  "Ab": {letter:"A",oct:3}, // 調号でA♭
-  "B":  {letter:"B",oct:3},
-  "F#": {letter:"F",oct:3}, // 調号でF♯
-  "C#": {letter:"C",oct:4}, // 調号でC♯
+// 推奨の開始音（小野アンナの並びを踏襲：開放弦/1stポジション起点）
+const START_BASE = {
+  "G":["G",3], "D":["D",3], "A":["A",3],
+  "C":["C",4], "F":["F",3], "Bb":["Bb",3],
+  "Eb":["Eb",4], "E":["E",4], "B":["B",3],
+  "F#":["F#",3], "Ab":["Ab",3], "C#":["C#",4]
 };
 
-// 文字列回転（CDEFGAB）
-const LETTERS = ["C","D","E","F","G","A","B"];
-function rotateFrom(letter){
-  const i = LETTERS.indexOf(letter);
-  return [...LETTERS.slice(i), ...LETTERS.slice(0,i)];
-}
+const PC = {"C":-9,"C#":-8,"Db":-8,"D":-7,"D#":-6,"Eb":-6,"E":-5,"F":-4,"F#":-3,"Gb":-3,"G":-2,"G#":-1,"Ab":-1,"A":0,"A#":1,"Bb":1,"B":2};
 
-// 2オクターブ上行（16音：出発→15ステップで頂点を含む）
-function buildUp(tonicLetter, startOct){
-  const seq = rotateFrom(tonicLetter);
-  const out = [];
-  let o = startOct;
-  for(let i=0;i<16;i++){
-    const L = seq[i%7];
-    // B→C でオクターブ繰上げ
-    if(i>0 && seq[(i-1)%7]==="B" && L==="C") o++;
-    out.push({letter:L, octave:o});
+const V_MIN = {letter:"G",oct:3};
+const V_MAX = {letter:"E",oct:7};
+
+function applyKeySig(letter, key){
+  const sig = KEY_SIG[key] || KEY_SIG.C;
+  if (sig.sharps.includes(letter)) return letter + "#";
+  if (sig.flats.includes(letter))  return letter + "b";
+  return letter;
+}
+export function letterFreq(letter, octave, key="C"){
+  const L = applyKeySig(letter, key);
+  const pc = PC[L];
+  const n = (octave-4)*12 + pc;
+  return 442*Math.pow(2,n/12);
+}
+function freqOf(o,key){ return letterFreq(o.letter,o.oct,key); }
+
+const LETTERS=["C","D","E","F","G","A","B"];
+const nextL = (L)=> LETTERS[(LETTERS.indexOf(L)+1)%7];
+
+function oneOct(rootL,rootO){
+  const arr=[]; let L=rootL,O=rootO;
+  for(let i=0;i<8;i++){
+    arr.push({letter:L,oct:O});
+    const N=nextL(L);
+    if((L==="E"&&N==="F")||(L==="B"&&N==="C")) O+=1;
+    L=N;
   }
-  return out;
+  return arr;
 }
 
-// 2オクターブ下行（16音）：頂点から下る
-function buildDown(upArr){
-  const top = upArr[upArr.length-1];
-  const seq = rotateFrom(upArr[0].letter);
-  // 上行最終音から逆順で16音
-  const down = [];
-  let o = top.octave;
-  // 開始はトップ音
-  down.push({...top});
-  // 残り15音を逆順で
-  for(let i=15;i>=1;i--){
-    const prevL = seq[(i-1)%7];
-    // C→B でオクターブ繰下げ
-    if(i<15 && seq[i%7]==="C" && prevL==="B") o--;
-    down.push({letter:prevL, octave:o});
+function build3Oct(startL,startO){
+  const up1=oneOct(startL,startO);
+  const up2=oneOct(up1[7].letter,up1[7].oct);
+  const up3=oneOct(up2[7].letter,up2[7].oct);
+  const up=[...up1,...up2,...up3];
+  const down=[...up].reverse();
+  return up.concat(down); // 48
+}
+
+export function makeMajorScale3Oct(key="G"){
+  let [L,O] = START_BASE[key] || ["G",3];
+
+  // バイオリン音域に収まるまで開始オクターブを±1で調整（最大3回）
+  for(let t=0;t<4;t++){
+    const cand = build3Oct(L,O);
+    const fmin = freqOf(cand[0], key);
+    const fmax = freqOf(cand[23], key); // 上行の最終音
+    const okLow = fmin >= freqOf(V_MIN,key);
+    const okHigh= fmax <= freqOf(V_MAX,key);
+    if(okLow && okHigh) return {keySignature:key, notes:cand};
+    if(!okHigh){ O -= 1; continue; }
+    if(!okLow){  O += 1; continue; }
   }
-  return down;
+  // それでもダメなら、レンジ外は **切り捨て**（表示しない）
+  let notes = build3Oct(L,O).filter(o=>{
+    const f = freqOf(o,key);
+    return f >= freqOf(V_MIN,key) && f <= freqOf(V_MAX,key);
+  });
+  // 片側欠けを避けるため、上行24が成立しない調は候補から外す想定だが、最低でも12音は確保
+  if (notes.length < 24) notes = notes.slice(0,24).concat([...notes.slice(0,24)].reverse());
+  return {keySignature:key, notes};
 }
 
-export function buildMajorScale(key){
-  const st = START[key] || START["G"];
-  const up = buildUp(st.letter, st.oct);
-  const down = buildDown(up);
-  const vexKeys = [...up, ...down].map(n=>`${n.letter}/${n.octave}`);
-  return { id:key, keySignature:key, vexKeys, noteObjs:[...up, ...down] };
-}
-
-export function letterFreq(letter, octave, key, a4=442){
-  const sig = KEY_SIG[key] || KEY_SIG["C"];
-  let semi = NAT[letter];
-  if(Array.isArray(sig.sharps) && sig.sharps.includes(letter)) semi += 1;
-  if(Array.isArray(sig.flats)  && sig.flats.includes(letter))  semi -= 1;
-  const n = (octave-4)*12 + (semi-9); // A4=442
-  return a4 * Math.pow(2, n/12);
+export function toVexKeys(objs, key="C"){
+  return objs.map(o => `${applyKeySig(o.letter,key)}/${o.oct}`);
 }
