@@ -1,8 +1,8 @@
 // scales.js
-// A4=442Hz。ご指定の実音列データをそのまま使用し、変換関数のみ実装。
+// A4=442Hz。ご提供の実音列データをそのまま採用。VexFlow用文字列/周波数変換のみ実装。
 export const A4 = 442;
 
-// ───────── 提供データ（長調/短調 × 上級/中級） ─────────
+// ===== 実音列データ（長調/短調 × 上級/中級） =====
 export const VIOLIN_RANGE = { advancedMax: "E7", intermediateMax: "F6", min: "G3" };
 
 export const MAJOR_ADVANCED = {
@@ -65,34 +65,30 @@ export const NATMIN_INTERMEDIATE = {
   "Bb": [ "Bb3","C4","Db4","Eb4","F4","Gb4","Ab4","Bb4","C5","Db5","Eb5","F5","Gb5","Ab5","Bb5","C6","Db6","Eb6","F6","Eb6","Db6","C6","Bb5","Ab5","Gb5","F5","Eb5","Db5","C5","Bb4","Ab4","Gb4","F4","Eb4","Db4","C4","Bb3" ],
 };
 
-// ───────── 変換ユーティリティ ─────────
+// 変換
 const NAT = { C:0,D:2,E:4,F:5,G:7,A:9,B:11 };
-
 export function parseNote(s){
   const m = s.match(/^([A-G])([#b]?)(\d)$/);
   if(!m) throw new Error("Parse error: "+s);
   return { letter:m[1], acc:m[2]||"", octave:+m[3] };
 }
-
 export function letterFreqWithAcc({letter,acc,octave}, a4=A4){
   let semi = NAT[letter] + (acc==="#"?1:(acc==="b"?-1:0));
-  const n = (octave-4)*12 + (semi - 9); // A4 index = 9
+  const n = (octave-4)*12 + (semi - 9);
   return a4 * Math.pow(2, n/12);
 }
-
 export function toVexKeyFromObj(o){ return `${o.letter.toLowerCase()}${o.acc||""}/${o.octave}`; }
 export function toVexKeys(noteObjs){ return noteObjs.map(toVexKeyFromObj); }
 
+// UIヘルパ
 function dataset(scaleType, level){
   const isMaj = scaleType==="major", isAdv = level==="advanced";
   return isMaj ? (isAdv?MAJOR_ADVANCED:MAJOR_INTERMEDIATE)
                : (isAdv?NATMIN_ADVANCED:NATMIN_INTERMEDIATE);
 }
-
 export function getKeys(scaleType, level){ return Object.keys(dataset(scaleType,level)); }
-
 export function makeExerciseAll(scaleType, level, key){
   const arr = dataset(scaleType,level)[key];
   if(!arr) throw new Error(`未知のキー: ${key} (${scaleType}/${level})`);
-  return arr.map(parseNote); // そのまま並べる（生成済みの実音列）
+  return arr.map(parseNote);
 }
