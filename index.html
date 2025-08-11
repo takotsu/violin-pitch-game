@@ -1,101 +1,170 @@
+<!-- index.html -->
 <!doctype html>
 <html lang="ja">
 <head>
   <meta charset="utf-8" />
-  <title>Violin Pitch Game</title>
+  <title>Violin Scale Trainer</title>
   <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover" />
   <link rel="stylesheet" href="./style.css" />
+  <!-- VexFlow（ローカル → CDN。失敗時は自前SVGフォールバック） -->
+  <script defer src="./lib/vexflow-min.js"></script>
+  <script>
+    // 失敗時にCDNを段階的にロード
+    (function () {
+      const urls = [
+        "https://cdn.jsdelivr.net/npm/vexflow@3.0.9/build/vexflow-min.js",
+        "https://unpkg.com/vexflow@3.0.9/build/vexflow-min.js",
+        "https://cdn.jsdelivr.net/npm/vexflow@4.2.3/build/esm/standalone/vexflow-min.js",
+        "https://unpkg.com/vexflow@4.2.3/build/esm/standalone/vexflow-min.js",
+      ];
+      let i = 0;
+      function tryLoad() {
+        if (window.Vex?.Flow || i >= urls.length) return;
+        const s = document.createElement("script");
+        s.src = urls[i++];
+        s.defer = true;
+        s.onload = tryLoad;
+        s.onerror = tryLoad;
+        document.head.appendChild(s);
+      }
+      window.addEventListener("DOMContentLoaded", tryLoad);
+    })();
+  </script>
 </head>
 <body>
-  <div id="topbar">
-    <div id="mini-score" aria-live="polite">—</div>
-    <span id="app-version" class="version">v16</span>
-  </div>
+  <!-- ヘッダー：スケール/レベル/キー/難易度/RMS閾値/メーター -->
+  <header id="topbar">
+    <div class="left">
+      <span class="brand">Violin Scale Trainer</span>
 
-  <section id="controls">
-    <div class="row">
-      <label>スケールの調:
-        <select id="key-select">
-          <option>G</option><option>D</option><option>A</option><option>E</option>
-          <option>C</option><option>F</option><option>Bb</option><option>Eb</option>
-          <option>Ab</option><option>B</option><option>F#</option><option>C#</option>
-        </select>
-      </label>
-
-      <label>合格閾値（点）:
-        <select id="pass"></select>
-      </label>
-
-      <div id="metro">
-        <label>BPM:
-          <input id="bpm" type="number" min="40" max="200" step="5" value="80" />
-        </label>
-        <label class="switch">
-          <input id="metroToggle" type="checkbox" />
-          <span>メトロノーム</span>
-        </label>
-        <span id="metro-led" aria-hidden="true"></span>
+      <div class="seg" role="tablist" aria-label="スケール">
+        <input type="radio" id="tab-major" name="scaleType" value="major" checked>
+        <label for="tab-major">長調</label>
+        <input type="radio" id="tab-minor" name="scaleType" value="minor">
+        <label for="tab-minor">短調</label>
       </div>
+
+      <div class="seg" role="tablist" aria-label="レベル">
+        <input type="radio" id="tab-intermediate" name="level" value="intermediate">
+        <label for="tab-intermediate">中級</label>
+        <input type="radio" id="tab-advanced" name="level" value="advanced" checked>
+        <label for="tab-advanced">上級</label>
+      </div>
+
+      <label class="key-inline">調:
+        <select id="key-select"></select>
+      </label>
+
+      <label class="rms-inline">RMS閾値
+        <input id="rms" type="number" min="0.0005" max="0.02" step="0.0005" value="0.0015" />
+      </label>
     </div>
 
-    <div class="row">
-      <label>音量閾値（RMS）:
-        <input id="rms" type="number" min="0.001" max="0.02" step="0.001" value="0.002" />
+    <div class="right">
+      <label class="diff-inline">難易度
+        <select id="difficulty">
+          <option value="easy">かんたん (±7c)</option>
+          <option value="normal" selected>ふつう (±5c)</option>
+          <option value="hard">鬼 (±2c)</option>
+        </select>
       </label>
+      <span class="a4">A<sub>4</sub>=442Hz</span>
+      <span id="db-indicator" class="db">— dB</span>
+      <span id="app-version" class="version">v1.7.0</span>
+    </div>
+  </header>
+
+  <!-- コントロール列（圧縮） -->
+  <section id="controls">
+    <div class="row">
       <div class="buttons">
         <button id="start">開始</button>
         <button id="stop" disabled>停止</button>
+        <button id="show-errors">ログ</button>
       </div>
+      <span id="mini-score" class="mini">—</span>
     </div>
   </section>
 
   <main>
-    <section id="score-area">
-      <div id="advice" aria-live="polite">待機中…</div>
-      <div id="big-score" aria-live="polite">—</div>
-      <div id="staff-wrap"><div id="staff"></div></div>
+    <!-- HUD：数値スコア／バー／針 -->
+    <section id="hud">
+      <div id="score-panel">
+        <div id="big-score" aria-live="polite">—</div>
+        <div id="advice" aria-live="polite">待機中…</div>
+
+        <div id="bar-wrap">
+          <div id="cents-scale"><span>-50</span><span>-25</span><span>0</span><span>+25</span><span>+50</span></div>
+          <div id="cents-bar">
+            <div id="bar-left-hint">低い</div>
+            <div id="bar-right-hint">高い</div>
+            <div id="bar-needle"></div>
+          </div>
+        </div>
+      </div>
+
+      <div id="analog">
+        <svg id="analog-svg" viewBox="-66 0 132 76" aria-hidden="true">
+          <path d="M -60 60 A 60 60 0 0 1 60 60" class="bezel" fill="none"/>
+          <g class="ticks" id="tickset"></g>
+          <g id="hand" transform="translate(0,60)">
+            <line x1="0" y1="0" x2="0" y2="-46" class="hand"/>
+            <circle cx="0" cy="0" r="3" class="cap"/>
+          </g>
+          <text x="0" y="72" class="label">±50c</text>
+        </svg>
+      </div>
     </section>
 
-    <section id="score-panel">
-      <div id="cents-area">
-        <div id="cents-scale">
-          <span>-50c</span><span>-25c</span><span>0c</span><span>+25c</span><span>+50c</span>
+    <!-- 譜面（2小節＝16音）。火花Canvasを背面合成 -->
+    <section id="score-area">
+      <div class="score-head">
+        <div class="left">
+          <span id="prog" aria-live="polite">音 1/—</span>
         </div>
-        <div id="cents-bar"><div id="needle"></div></div>
+        <div class="right">
+          <span id="page-label">小節 1–2 / 全 — 小節</span>
+        </div>
       </div>
-      <div id="prog" aria-live="polite">音 1/32</div>
+      <div id="staff-wrap">
+        <div id="staff"></div>
+        <canvas id="spark"></canvas>
+      </div>
     </section>
   </main>
 
-  <!-- 結果 -->
-  <div id="result" aria-hidden="true">
-    <canvas id="confetti"></canvas>
+  <!-- マイク許可ゲート -->
+  <div id="gate" class="modal show" aria-hidden="false">
     <div class="card">
-      <div class="label">完了</div>
-      <div id="praise">Good!</div>
+      <h2>マイクの使用許可</h2>
+      <p>許可後は自動で開始します。ホームや他画面に移動すると<strong>即時停止</strong>します。</p>
+      <button id="permit" onclick="window.__permit && window.__permit()">許可</button>
+    </div>
+  </div>
+
+  <!-- 完了ダイアログ -->
+  <div id="result" class="modal" aria-hidden="true">
+    <div class="card">
+      <div class="label">音階 完了</div>
+      <div id="praise">Great!</div>
       <div id="details"></div>
-      <div class="buttons">
-        <button id="again">もう一度</button>
-        <button id="close">閉じる</button>
-      </div>
+      <div class="buttons"><button id="again">もう一度</button><button id="close">閉じる</button></div>
     </div>
   </div>
 
   <!-- エラー一覧 -->
-  <div id="error-modal" aria-hidden="true">
+  <div id="error-modal" class="modal" aria-hidden="true">
     <div class="card">
       <h2>エラー情報</h2>
       <ol id="error-list"></ol>
-      <div class="buttons">
-        <button id="err-copy">内容をコピー</button>
-        <button id="err-close">閉じる</button>
-      </div>
+      <div class="buttons"><button id="err-copy">内容をコピー</button><button id="err-close">閉じる</button></div>
     </div>
   </div>
 
+  <div id="hud-flash"></div>
   <div id="toast" aria-live="polite" aria-atomic="true"></div>
 
-  <!-- スリープ防止（iOSフォールバック） -->
+  <!-- スリープ抑止（ユーザー操作後に再生） -->
   <video id="nosleep" muted playsinline loop style="position:absolute;width:1px;height:1px;opacity:0;pointer-events:none">
     <source src="data:video/mp4;base64,AAAAHGZ0eXBpc28yAAAAAGlzbzJpc28yYXZjMQAA" type="video/mp4" />
   </video>
@@ -103,5 +172,14 @@
   <script type="module" src="./scales.js"></script>
   <script type="module" src="./score.js"></script>
   <script type="module" src="./app.js"></script>
+
+  <script>
+    // 「許可」ボタンは pointerup/touchend/click どれでも進む
+    document.addEventListener('DOMContentLoaded',()=>{
+      const b=document.getElementById('permit'); if(!b) return;
+      const h=()=>window.__permit && window.__permit();
+      ['pointerup','touchend','click'].forEach(ev=>b.addEventListener(ev,h,{once:true}));
+    });
+  </script>
 </body>
 </html>
