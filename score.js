@@ -1,6 +1,5 @@
 // score.js
 // 2小節=16音でページング表示。VexFlow優先／自前SVGフォールバック。
-// 現在ターゲット音は緑（note-target）、不合格は赤（note-failed）、他は白（note-normal）。
 
 import { toVexKeys } from "./scales.js";
 
@@ -20,10 +19,9 @@ function notehead(svg,x,y,cls="note-normal",rX=5.6,rY=4,rot=-20){
   e.setAttribute("cx",x); e.setAttribute("cy",y); e.setAttribute("rx",rX); e.setAttribute("ry",rY);
   e.setAttribute("transform",`rotate(${rot},${x},${y})`); e.setAttribute("class",cls); svg.appendChild(e); return e;
 }
-function stem(svg,x,y,len=20,cls="note-normal"){ const st=line(svg,x+7,y-3,x+7,y-3-len,"#e8eef7",1.5); st.setAttribute("class",cls); return st; }
+function stem(svg,x,y,len=22,cls="note-normal"){ const st=line(svg,x+7,y-3,x+7,y-3-len,"#e8eef7",1.5); st.setAttribute("class",cls); return st; }
 
 function renderKeySignature(svg, key, left, top, space){
-  // 調号だけ（拍子・ト音記号は出さない）
   const keyMap = {"C":{s:0},"G":{s:1},"D":{s:2},"A":{s:3},"E":{s:4},"B":{s:5},"F#":{s:6},
     "F":{f:1},"Bb":{f:2},"Eb":{f:3},"Ab":{f:4},"Db":{f:5}};
   const k=keyMap[key]||{s:0};
@@ -44,7 +42,7 @@ function renderFallback({ key, notes16 }){
   const w=staffDiv.clientWidth||780, h=staffDiv.clientHeight||300;
   let top=62, space=15, left=14, right=w-14;
 
-  // 高音見切れ防止：最上位音が余白22px以上になるよう上詰め
+  // 高音見切れ防止：最上位音の余白を確保
   const yTrial=(L,O,top0)=>{ const idx=(l)=>["C","D","E","F","G","A","B"].indexOf(l); const s=(O-4)*7+(idx(L)-idx("E")); return (top0+space*4)-(s*space/2); };
   let minY=1e9; for(const n of notes16){ const y=yTrial(n.letter,n.octave,top); if(y<minY) minY=y; }
   if(minY<22){ top += 22-minY; }
@@ -66,7 +64,7 @@ function renderFallback({ key, notes16 }){
     stem(svg,x,y,22,"note-normal");
     if((i+1)%8===0 && i<16) line(svg, innerLeft+stepX*(i+1), top, innerLeft+stepX*(i+1), bottom2, "#7aa2c1",1.1);
     nodes.push(head);
-    const pos = (bottom2 - y)/(space/2); // 加線
+    const pos = (bottom2 - y)/(space/2);
     if(pos<-2){ for(let k=-2;k>=pos; k-=2){ line(svg, x-9, bottom2 + (Math.abs(k)/2-1)*space, x+9, bottom2 + (Math.abs(k)/2-1)*space, "#e8eef7",1.05); } }
     else if(pos>10){ for(let k=10;k<=pos; k+=2){ line(svg, x-9, top - ((k-10)/2+1)*space, x+9, top - ((k-10)/2+1)*space, "#e8eef7",1.05); } }
   });

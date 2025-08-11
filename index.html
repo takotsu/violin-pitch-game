@@ -9,7 +9,6 @@
   <!-- VexFlow（ローカル → CDN。失敗時は自前SVGフォールバック） -->
   <script defer src="./lib/vexflow-min.js"></script>
   <script>
-    // 失敗時にCDNを段階的にロード
     (function () {
       const urls = [
         "https://cdn.jsdelivr.net/npm/vexflow@3.0.9/build/vexflow-min.js",
@@ -32,7 +31,7 @@
   </script>
 </head>
 <body>
-  <!-- ヘッダー：スケール/レベル/キー/難易度/RMS閾値/メーター -->
+  <!-- ヘッダー：スケール/レベル/キー/難易度/A4/開始停止/dB -->
   <header id="topbar">
     <div class="left">
       <span class="brand">Violin Scale Trainer</span>
@@ -55,39 +54,29 @@
         <select id="key-select"></select>
       </label>
 
-      <label class="rms-inline">RMS閾値
-        <input id="rms" type="number" min="0.0005" max="0.02" step="0.0005" value="0.0015" />
+      <label class="diff-inline">難易度
+        <select id="difficulty">
+          <option value="s-easy">超かんたん (±9c)</option>
+          <option value="easy">かんたん (±7c)</option>
+          <option value="normal" selected>ふつう (±5c)</option>
+          <option value="hard">難しい (±3c)</option>
+          <option value="oni">鬼 (±2c)</option>
+        </select>
       </label>
     </div>
 
     <div class="right">
-      <label class="diff-inline">難易度
-        <select id="difficulty">
-          <option value="easy">かんたん (±7c)</option>
-          <option value="normal" selected>ふつう (±5c)</option>
-          <option value="hard">鬼 (±2c)</option>
-        </select>
-      </label>
+      <button id="start">開始</button>
+      <button id="stop" disabled>停止</button>
+      <button id="show-errors">ログ</button>
       <span class="a4">A<sub>4</sub>=442Hz</span>
       <span id="db-indicator" class="db">— dB</span>
-      <span id="app-version" class="version">v1.7.0</span>
+      <span id="app-version" class="version">v1.8.0</span>
     </div>
   </header>
 
-  <!-- コントロール列（圧縮） -->
-  <section id="controls">
-    <div class="row">
-      <div class="buttons">
-        <button id="start">開始</button>
-        <button id="stop" disabled>停止</button>
-        <button id="show-errors">ログ</button>
-      </div>
-      <span id="mini-score" class="mini">—</span>
-    </div>
-  </section>
-
   <main>
-    <!-- HUD：数値スコア／バー／針 -->
+    <!-- HUD：スコア／バー／針 -->
     <section id="hud">
       <div id="score-panel">
         <div id="big-score" aria-live="polite">—</div>
@@ -116,7 +105,7 @@
       </div>
     </section>
 
-    <!-- 譜面（2小節＝16音）。火花Canvasを背面合成 -->
+    <!-- 譜面（2小節＝16音）。火花Canvasは背面合成 -->
     <section id="score-area">
       <div class="score-head">
         <div class="left">
@@ -127,8 +116,8 @@
         </div>
       </div>
       <div id="staff-wrap">
-        <div id="staff"></div>
         <canvas id="spark"></canvas>
+        <div id="staff"></div>
       </div>
     </section>
   </main>

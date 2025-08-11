@@ -7,7 +7,7 @@
 html,body{margin:0;padding:0;background:var(--bg);color:var(--fg);
   font-family:system-ui,-apple-system,"Segoe UI","Hiragino Kaku Gothic ProN","Yu Gothic",Roboto,sans-serif}
 
-/* stickyヘッダー（可変高） */
+/* stickyヘッダー（圧縮＆2行運用） */
 #topbar{
   position:sticky; top:0; z-index:10000;
   display:flex; flex-wrap:wrap; gap:8px 10px; align-items:center; justify-content:space-between;
@@ -15,35 +15,29 @@ html,body{margin:0;padding:0;background:var(--bg);color:var(--fg);
 }
 #topbar .left,#topbar .right{display:flex;flex-wrap:wrap;align-items:center;gap:8px}
 #topbar .brand{font-weight:800;margin-right:2px}
-#topbar .key-inline,.diff-inline,.rms-inline{display:flex;align-items:center;gap:6px;font-size:12px}
+#topbar .key-inline,.diff-inline{display:flex;align-items:center;gap:6px;font-size:12px}
 #topbar select{appearance:none;background:#0f1822;color:var(--fg);border:1px solid var(--line);border-radius:10px;padding:8px 10px}
-#topbar input[type=number]{width:90px;padding:8px;border-radius:10px;border:1px solid var(--line);background:#0f1822;color:var(--fg)}
 #topbar .version{font-size:11px;opacity:.7;margin-left:4px}
 #topbar .db{font-size:12px;padding:4px 10px;border-radius:999px;background:#0d1117;border:1px solid var(--line)}
-#topbar .a4{font-size:12px;opacity:.85;margin-right:4px}
+#topbar .a4{font-size:12px;opacity:.85;margin:0 4px}
 
 .seg{display:inline-grid;grid-auto-flow:column;border:1px solid var(--line);border-radius:10px;overflow:hidden}
 .seg input{display:none}
 .seg label{padding:8px 10px;font-size:12px;cursor:pointer;background:#0f1822;color:#c9d5e3;user-select:none}
 .seg input:checked+label{background:#1c2532;color:#fff;font-weight:800}
 
-main{padding:8px 10px 14px;max-width:880px;margin:0 auto}
-
-/* ボタン行（圧縮） */
-#controls{max-width:880px;margin:6px auto 8px;padding:0 10px}
-#controls .row{display:grid;grid-template-columns:1fr auto;gap:8px;align-items:center}
-#controls .buttons{display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px}
-button{padding:12px;border:0;border-radius:12px;font-weight:800;background:#111827;color:var(--fg);cursor:pointer}
+button{padding:10px 12px;border:0;border-radius:12px;font-weight:800;background:#111827;color:var(--fg);cursor:pointer}
 #start{background:#2563eb} #stop{background:#6b7280} #show-errors{background:#374151}
 body.running #start{background:#10b981}
-#mini-score{font-weight:900}
+
+main{padding:8px 10px 14px;max-width:880px;margin:0 auto}
 
 #hud{display:grid;grid-template-columns:1fr 200px;gap:10px;align-items:start}
 @media (max-width:760px){ #hud{grid-template-columns:1fr} }
 
 #score-panel{background:#0f131a;border:1px solid var(--line);border-radius:12px;padding:8px}
-#big-score{font-size:30px;font-weight:900;text-align:center}
-#advice{text-align:center;margin:2px 0 8px 0;font-size:16px;font-weight:800}
+#big-score{font-size:32px;font-weight:900;text-align:center}
+#advice{text-align:center;margin:0 0 8px 0;font-size:16px;font-weight:800}
 #advice.good{color:#b7ffcf} #advice.warn{color:#ffd89a} #advice.bad{color:#ffb3b3}
 
 /* バー */
@@ -72,8 +66,8 @@ body.running #start{background:#10b981}
 .score-head{display:flex;align-items:center;justify-content:space-between;margin:2px 0 6px 0}
 #staff-wrap{position:relative;width:100%;height:320px;background:#0f131a;border:1px solid var(--line);border-radius:12px;overflow:hidden}
 @media (max-width:640px){ #staff-wrap{height:300px} }
-#staff{position:absolute;inset:0}
-#spark{position:absolute;inset:0;pointer-events:none}
+#spark{position:absolute;inset:0;pointer-events:none;z-index:0}
+#staff{position:absolute;inset:0;z-index:1}
 
 .note-normal{fill:#e8eef7;stroke:#e8eef7}
 .note-target{fill:#22c55e;stroke:#22c55e}
