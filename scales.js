@@ -1,93 +1,98 @@
-export const ALL_KEYS = ["G","D","A","E","C","F","Bb","Eb","Ab","B","F#","C#"];
+// scales.js
+// A4=442Hz。ご指定の実音列データをそのまま使用し、変換関数のみ実装。
+export const A4 = 442;
 
-// 調号
-export const KEY_SIG = {
-  "C":  {sharps:[], flats:[]},
-  "G":  {sharps:["F"], flats:[]},
-  "D":  {sharps:["F","C"], flats:[]},
-  "A":  {sharps:["F","C","G"], flats:[]},
-  "E":  {sharps:["F","C","G","D"], flats:[]},
-  "B":  {sharps:["F","C","G","D","A"], flats:[]},
-  "F#": {sharps:["F","C","G","D","A","E"], flats:[]},
-  "C#": {sharps:["F","C","G","D","A","E","B"], flats:[]},
-  "F":  {sharps:[], flats:["B"]},
-  "Bb": {sharps:[], flats:["B","E"]},
-  "Eb": {sharps:[], flats:["B","E","A"]},
-  "Ab": {sharps:[], flats:["B","E","A","D"]},
+// ───────── 提供データ（長調/短調 × 上級/中級） ─────────
+export const VIOLIN_RANGE = { advancedMax: "E7", intermediateMax: "F6", min: "G3" };
+
+export const MAJOR_ADVANCED = {
+  "C": [ "C4","D4","E4","F4","G4","A4","B4","C5","D5","E5","F5","G5","A5","B5","C6","D6","E6","F6","G6","A6","B6","C7","C7","B6","A6","G6","F6","E6","D6","C6","B5","A5","G5","F5","E5","D5","C5","B4","A4","G4","F4","E4","D4","C4" ],
+  "G": [ "G3","A3","B3","C4","D4","E4","F#4","G4","A4","B4","C5","D5","E5","F#5","G5","A5","B5","C6","D6","E6","F#6","G6","G6","F#6","E6","D6","C6","B5","A5","G5","F#5","E5","D5","C5","B4","A4","G4","F#4","E4","D4","C4","B3","A3","G3" ],
+  "D": [ "D4","E4","F#4","G4","A4","B4","C#5","D5","E5","F#5","G5","A5","B5","C#6","D6","E6","F#6","G6","A6","B6","C#7","D7","D7","C#7","B6","A6","G6","F#6","E6","D6","C#6","B5","A5","G5","F#5","E5","D5","C#5","B4","A4","G4","F#4","E4","D4" ],
+  "A": [ "A3","B3","C#4","D4","E4","F#4","G#4","A4","B4","C#5","D5","E5","F#5","G#5","A5","B5","C#6","D6","E6","F#6","G#6","A6","A6","G#6","F#6","E6","D6","C#6","B5","A5","G#5","F#5","E5","D5","C#5","B4","A4","G#4","F#4","E4","D4","C#4","B3","A3" ],
+  "E": [ "E4","F#4","G#4","A4","B4","C#5","D#5","E5","F#5","G#5","A5","B5","C#6","D#6","E6","F#6","G#6","A6","B6","C#7","D#7","E7","E7","D#7","C#7","B6","A6","G#6","F#6","E6","D#6","C#6","B5","A5","G#5","F#5","E5","D#5","C#5","B4","A4","G#4","F#4","E4" ],
+  "B": [ "B3","C#4","D#4","E4","F#4","G#4","A#4","B4","C#5","D#5","E5","F#5","G#5","A#5","B5","C#6","D#6","E6","F#6","G#6","A#6","B6","B6","A#6","G#6","F#6","E6","D#6","C#6","B5","A#5","G#5","F#5","E5","D#5","C#5","B4","A#4","G#4","F#4","E4","D#4","C#4","B3" ],
+  "F#": [ "F#4","G#4","A#4","B4","C#5","D#5","E#5","F#5","G#5","A#5","B5","C#6","D#6","E#6","F#6","G#6","A#6","B6","C#7","D#7","D#7","C#7","B6","A#6","G#6","F#6","E#6","D#6","C#6","B5","A#5","G#5","F#5","E#5","D#5","C#5","B4","A#4","G#4","F#4" ],
+  "F": [ "F4","G4","A4","Bb4","C5","D5","E5","F5","G5","A5","Bb5","C6","D6","E6","F6","G6","A6","Bb6","C7","D7","E7","E7","D7","C7","Bb6","A6","G6","F6","E6","D6","C6","Bb5","A5","G5","F5","E5","D5","C5","Bb4","A4","G4","F4" ],
+  "Bb": [ "Bb3","C4","D4","Eb4","F4","G4","A4","Bb4","C5","D5","Eb5","F5","G5","A5","Bb5","C6","D6","Eb6","F6","G6","A6","Bb6","Bb6","A6","G6","F6","Eb6","D6","C6","Bb5","A5","G5","F5","Eb5","D5","C5","Bb4","A4","G4","F4","Eb4","D4","C4","Bb3" ],
+  "Eb": [ "Eb4","F4","G4","Ab4","Bb4","C5","D5","Eb5","F5","G5","Ab5","Bb5","C6","D6","Eb6","F6","G6","Ab6","Bb6","C7","D7","Eb7","Eb7","D7","C7","Bb6","Ab6","G6","F6","Eb6","D6","C6","Bb5","Ab5","G5","F5","Eb5","D5","C5","Bb4","Ab4","G4","F4","Eb4" ],
+  "Ab": [ "Ab3","Bb3","C4","Db4","Eb4","F4","G4","Ab4","Bb4","C5","Db5","Eb5","F5","G5","Ab5","Bb5","C6","Db6","Eb6","F6","G6","Ab6","Ab6","G6","F6","Eb6","Db6","C6","Bb5","Ab5","G5","F5","Eb5","Db5","C5","Bb4","Ab4","G4","F4","Eb4","Db4","C4","Bb3","Ab3" ],
+  "Db": [ "Db4","Eb4","F4","Gb4","Ab4","Bb4","C5","Db5","Eb5","F5","Gb5","Ab5","Bb5","C6","Db6","Eb6","F6","Gb6","Ab6","Bb6","C7","Db7","Db7","C7","Bb6","Ab6","Gb6","F6","Eb6","Db6","C6","Bb5","Ab5","Gb5","F5","Eb5","Db5","C5","Bb4","Ab4","Gb4","F4","Eb4","Db4" ],
 };
 
-// 自然音 → 半音
-const NAT = {C:0,D:2,E:4,F:5,G:7,A:9,B:11};
-
-// バイオリン2オクターブ標準開始音（1st〜3rdポジ想定）
-const START = {
-  "G":  {letter:"G",oct:3},
-  "D":  {letter:"D",oct:4},
-  "A":  {letter:"A",oct:3},
-  "E":  {letter:"E",oct:4},
-  "C":  {letter:"C",oct:4},
-  "F":  {letter:"F",oct:4},
-  "Bb": {letter:"B",oct:3}, // 調号でB♭
-  "Eb": {letter:"E",oct:4}, // 調号でE♭
-  "Ab": {letter:"A",oct:3}, // 調号でA♭
-  "B":  {letter:"B",oct:3},
-  "F#": {letter:"F",oct:3}, // 調号でF♯
-  "C#": {letter:"C",oct:4}, // 調号でC♯
+export const NATMIN_ADVANCED = {
+  "A": [ "A3","B3","C4","D4","E4","F4","G4","A4","B4","C5","D5","E5","F5","G5","A5","B5","C6","D6","E6","F6","G6","A6","A6","G6","F6","E6","D6","C6","B5","A5","G5","F5","E5","D5","C5","B4","A4","G4","F4","E4","D4","C4","B3","A3" ],
+  "E": [ "E4","F#4","G4","A4","B4","C5","D5","E5","F#5","G5","A5","B5","C6","D6","E6","F#6","G6","A6","B6","C7","D7","E7","E7","D7","C7","B6","A6","G6","F#6","E6","D6","C6","B5","A5","G5","F#5","E5","D5","C5","B4","A4","G4","F#4","E4" ],
+  "B": [ "B3","C#4","D4","E4","F#4","G4","A4","B4","C#5","D5","E5","F#5","G5","A5","B5","C#6","D6","E6","F#6","G6","A6","B6","B6","A6","G6","F#6","E6","D6","C#6","B5","A5","G5","F#5","E5","D5","C#5","B4","A4","G4","F#4","E4","D4","C#4","B3" ],
+  "F#": [ "F#4","G#4","A4","B4","C#5","D5","E5","F#5","G#5","A5","B5","C#6","D6","E6","F#6","G#6","A6","B6","C#7","D7","E7","E7","D7","C#7","B6","A6","G#6","F#6","E6","D6","C#6","B5","A5","G#5","F#5","E5","D5","C#5","B4","A4","G#4","F#4" ],
+  "C#": [ "C#4","D#4","E4","F#4","G#4","A4","B4","C#5","D#5","E5","F#5","G#5","A5","B5","C#6","D#6","E6","F#6","G#6","A6","B6","C#7","C#7","B6","A6","G#6","F#6","E6","D#6","C#6","B5","A5","G#5","F#5","E5","D#5","C#5","B4","A4","G#4","F#4","E4","D#4","C#4" ],
+  "G#": [ "G#3","A#3","B3","C#4","D#4","E4","F#4","G#4","A#4","B4","C#5","D#5","E5","F#5","G#5","A#5","B5","C#6","D#6","E6","F#6","G#6","G#6","F#6","E6","D#6","C#6","B5","A#5","G#5","F#5","E5","D#5","C#5","B4","A#4","G#4","F#4","E4","D#4","C#4","B3","A#3","G#3" ],
+  "D#": [ "D#4","E#4","F#4","G#4","A#4","B4","C#5","D#5","E#5","F#5","G#5","A#5","B5","C#6","D#6","E#6","F#6","G#6","A#6","B6","C#7","D#7","D#7","C#7","B6","A#6","G#6","F#6","E#6","D#6","C#6","B5","A#5","G#5","F#5","E#5","D#5","C#5","B4","A#4","G#4","F#4","E#4","D#4" ],
+  "D": [ "D4","E4","F4","G4","A4","Bb4","C5","D5","E5","F5","G5","A5","Bb5","C6","D6","E6","F6","G6","A6","Bb6","C7","D7","D7","C7","Bb6","A6","G6","F6","E6","D6","C6","Bb5","A5","G5","F5","E5","D5","C5","Bb4","A4","G4","F4","E4","D4" ],
+  "G": [ "G3","A3","Bb3","C4","D4","Eb4","F4","G4","A4","Bb4","C5","D5","Eb5","F5","G5","A5","Bb5","C6","D6","Eb6","F6","G6","G6","F6","Eb6","D6","C6","Bb5","A5","G5","F5","Eb5","D5","C5","Bb4","A4","G4","F4","Eb4","D4","C4","Bb3","A3","G3" ],
+  "C": [ "C4","D4","Eb4","F4","G4","Ab4","Bb4","C5","D5","Eb5","F5","G5","Ab5","Bb5","C6","D6","Eb6","F6","G6","Ab6","Bb6","C7","C7","Bb6","Ab6","G6","F6","Eb6","D6","C6","Bb5","Ab5","G5","F5","Eb5","D5","C5","Bb4","Ab4","G4","F4","Eb4","D4","C4" ],
+  "F": [ "F4","G4","Ab4","Bb4","C5","Db5","Eb5","F5","G5","Ab5","Bb5","C6","Db6","Eb6","F6","G6","Ab6","Bb6","C7","Db7","Eb7","Eb7","Db7","C7","Bb6","Ab6","G6","F6","Eb6","Db6","C6","Bb5","Ab5","G5","F5","Eb5","Db5","C5","Bb4","Ab4","G4","F4" ],
+  "Bb": [ "Bb3","C4","Db4","Eb4","F4","Gb4","Ab4","Bb4","C5","Db5","Eb5","F5","Gb5","Ab5","Bb5","C6","Db6","Eb6","F6","Gb6","Ab6","Bb6","Bb6","Ab6","Gb6","F6","Eb6","Db6","C6","Bb5","Ab5","Gb5","F5","Eb5","Db5","C5","Bb4","Ab4","Gb4","F4","Eb4","Db4","C4","Bb3" ],
 };
 
-// 文字列回転（CDEFGAB）
-const LETTERS = ["C","D","E","F","G","A","B"];
-function rotateFrom(letter){
-  const i = LETTERS.indexOf(letter);
-  return [...LETTERS.slice(i), ...LETTERS.slice(0,i)];
+export const MAJOR_INTERMEDIATE = {
+  "C": [ "C4","D4","E4","F4","G4","A4","B4","C5","D5","E5","F5","G5","A5","B5","C6","D6","E6","F6","E6","D6","C6","B5","A5","G5","F5","E5","D5","C5","B4","A4","G4","F4","E4","D4","C4" ],
+  "G": [ "G3","A3","B3","C4","D4","E4","F#4","G4","A4","B4","C5","D5","E5","F#5","G5","A5","B5","C6","D6","E6","D6","C6","B5","A5","G5","F#5","E5","D5","C5","B4","A4","G4","F#4","E4","D4","C4","B3","A3","G3" ],
+  "D": [ "D4","E4","F#4","G4","A4","B4","C#5","D5","E5","F#5","G5","A5","B5","C#6","D6","E6","D6","C#6","B5","A5","G5","F#5","E5","D5","C#5","B4","A4","G4","F#4","E4","D4" ],
+  "A": [ "A3","B3","C#4","D4","E4","F#4","G#4","A4","B4","C#5","D5","E5","F#5","G#5","A5","B5","C#6","D6","E6","D6","C#6","B5","A5","G#5","F#5","E5","D5","C#5","B4","A4","G#4","F#4","E4","D4","C#4","B3","A3" ],
+  "E": [ "E4","F#4","G#4","A4","B4","C#5","D#5","E5","F#5","G#5","A5","B5","C#6","D#6","E6","D#6","C#6","B5","A5","G#5","F#5","E5","D#5","C#5","B4","A4","G#4","F#4","E4" ],
+  "B": [ "B3","C#4","D#4","E4","F#4","G#4","A#4","B4","C#5","D#5","E5","F#5","G#5","A#5","B5","C#6","D#6","E6","D#6","C#6","B5","A#5","G#5","F#5","E5","D#5","C#5","B4","A#4","G#4","F#4","E4","D#4","C#4","B3" ],
+  "F#": [ "F#4","G#4","A#4","B4","C#5","D#5","E#5","F#5","G#5","A#5","B5","C#6","D#6","E#6","D#6","C#6","B5","A#5","G#5","F#5","E#5","D#5","C#5","B4","A#4","G#4","F#4" ],
+  "F": [ "F4","G4","A4","Bb4","C5","D5","E5","F5","G5","A5","Bb5","C6","D6","E6","F6","E6","D6","C6","Bb5","A5","G5","F5","E5","D5","C5","Bb4","A4","G4","F4" ],
+  "Bb": [ "Bb3","C4","D4","Eb4","F4","G4","A4","Bb4","C5","D5","Eb5","F5","G5","A5","Bb5","C6","D6","Eb6","F6","Eb6","D6","C6","Bb5","A5","G5","F5","Eb5","D5","C5","Bb4","A4","G4","F4","Eb4","D4","C4","Bb3" ],
+  "Eb": [ "Eb4","F4","G4","Ab4","Bb4","C5","D5","Eb5","F5","G5","Ab5","Bb5","C6","D6","Eb6","F6","Eb6","D6","C6","Bb5","Ab5","G5","F5","Eb5","D5","C5","Bb4","Ab4","G4","F4","Eb4" ],
+  "Ab": [ "Ab3","Bb3","C4","Db4","Eb4","F4","G4","Ab4","Bb4","C5","Db5","Eb5","F5","G5","Ab5","Bb5","C6","Db6","Eb6","F6","Eb6","Db6","C6","Bb5","Ab5","G5","F5","Eb5","Db5","C5","Bb4","Ab4","G4","F4","Eb4","Db4","C4","Bb3","Ab3" ],
+  "Db": [ "Db4","Eb4","F4","Gb4","Ab4","Bb4","C5","Db5","Eb5","F5","Gb5","Ab5","Bb5","C6","Db6","Eb6","F6","Eb6","Db6","C6","Bb5","Ab5","Gb5","F5","Eb5","Db5","C5","Bb4","Ab4","Gb4","F4","Eb4","Db4" ],
+};
+
+export const NATMIN_INTERMEDIATE = {
+  "A": [ "A3","B3","C4","D4","E4","F4","G4","A4","B4","C5","D5","E5","F5","G5","A5","B5","C6","D6","E6","F6","E6","D6","C6","B5","A5","G5","F5","E5","D5","C5","B4","A4","G4","F4","E4","D4","C4","B3","A3" ],
+  "E": [ "E4","F#4","G4","A4","B4","C5","D5","E5","F#5","G5","A5","B5","C6","D6","E6","D6","C6","B5","A5","G5","F#5","E5","D5","C5","B4","A4","G4","F#4","E4" ],
+  "B": [ "B3","C#4","D4","E4","F#4","G4","A4","B4","C#5","D5","E5","F#5","G5","A5","B5","C#6","D6","E6","D6","C#6","B5","A5","G5","F#5","E5","D5","C#5","B4","A4","G4","F#4","E4","D4","C#4","B3" ],
+  "F#": [ "F#4","G#4","A4","B4","C#5","D5","E5","F#5","G#5","A5","B5","C#6","D6","E6","D6","C#6","B5","A5","G#5","F#5","E5","D5","C#5","B4","A4","G#4","F#4" ],
+  "C#": [ "C#4","D#4","E4","F#4","G#4","A4","B4","C#5","D#5","E5","F#5","G#5","A5","B5","C#6","D#6","E6","D#6","C#6","B5","A5","G#5","F#5","E5","D#5","C#5","B4","A4","G#4","F#4","E4","D#4","C#4" ],
+  "G#": [ "G#3","A#3","B3","C#4","D#4","E4","F#4","G#4","A#4","B4","C#5","D#5","E5","F#5","G#5","A#5","B5","C#6","D#6","E6","D#6","C#6","B5","A#5","G#5","F#5","E5","D#5","C#5","B4","A#4","G#4","F#4","E4","D#4","C#4","B3","A#3","G#3" ],
+  "D#": [ "D#4","E#4","F#4","G#4","A#4","B4","C#5","D#5","E#5","F#5","G#5","A#5","B5","C#6","D#6","E#6","D#6","C#6","B5","A#5","G#5","F#5","E#5","D#5","C#5","B4","A#4","G#4","F#4","E#4","D#4" ],
+  "D": [ "D4","E4","F4","G4","A4","Bb4","C5","D5","E5","F5","G5","A5","Bb5","C6","D6","E6","F6","E6","D6","C6","Bb5","A5","G5","F5","E5","D5","C5","Bb4","A4","G4","F4","E4","D4" ],
+  "G": [ "G3","A3","Bb3","C4","D4","Eb4","F4","G4","A4","Bb4","C5","D5","Eb5","F5","G5","A5","Bb5","C6","D6","Eb6","F6","Eb6","D6","C6","Bb5","A5","G5","F5","Eb5","D5","C5","Bb4","A4","G4","F4","Eb4","D4","C4","Bb3","A3","G3" ],
+  "C": [ "C4","D4","Eb4","F4","G4","Ab4","Bb4","C5","D5","Eb5","F5","G5","Ab5","Bb5","C6","D6","Eb6","F6","Eb6","D6","C6","Bb5","Ab5","G5","F5","Eb5","D5","C5","Bb4","Ab4","G4","F4","Eb4","D4","C4" ],
+  "F": [ "F4","G4","Ab4","Bb4","C5","Db5","Eb5","F5","G5","Ab5","Bb5","C6","Db6","Eb6","F6","Eb6","Db6","C6","Bb5","Ab5","G5","F5","Eb5","Db5","C5","Bb4","Ab4","G4","F4" ],
+  "Bb": [ "Bb3","C4","Db4","Eb4","F4","Gb4","Ab4","Bb4","C5","Db5","Eb5","F5","Gb5","Ab5","Bb5","C6","Db6","Eb6","F6","Eb6","Db6","C6","Bb5","Ab5","Gb5","F5","Eb5","Db5","C5","Bb4","Ab4","Gb4","F4","Eb4","Db4","C4","Bb3" ],
+};
+
+// ───────── 変換ユーティリティ ─────────
+const NAT = { C:0,D:2,E:4,F:5,G:7,A:9,B:11 };
+
+export function parseNote(s){
+  const m = s.match(/^([A-G])([#b]?)(\d)$/);
+  if(!m) throw new Error("Parse error: "+s);
+  return { letter:m[1], acc:m[2]||"", octave:+m[3] };
 }
 
-// 2オクターブ上行（16音：出発→15ステップで頂点を含む）
-function buildUp(tonicLetter, startOct){
-  const seq = rotateFrom(tonicLetter);
-  const out = [];
-  let o = startOct;
-  for(let i=0;i<16;i++){
-    const L = seq[i%7];
-    // B→C でオクターブ繰上げ
-    if(i>0 && seq[(i-1)%7]==="B" && L==="C") o++;
-    out.push({letter:L, octave:o});
-  }
-  return out;
-}
-
-// 2オクターブ下行（16音）：頂点から下る
-function buildDown(upArr){
-  const top = upArr[upArr.length-1];
-  const seq = rotateFrom(upArr[0].letter);
-  // 上行最終音から逆順で16音
-  const down = [];
-  let o = top.octave;
-  // 開始はトップ音
-  down.push({...top});
-  // 残り15音を逆順で
-  for(let i=15;i>=1;i--){
-    const prevL = seq[(i-1)%7];
-    // C→B でオクターブ繰下げ
-    if(i<15 && seq[i%7]==="C" && prevL==="B") o--;
-    down.push({letter:prevL, octave:o});
-  }
-  return down;
-}
-
-export function buildMajorScale(key){
-  const st = START[key] || START["G"];
-  const up = buildUp(st.letter, st.oct);
-  const down = buildDown(up);
-  const vexKeys = [...up, ...down].map(n=>`${n.letter}/${n.octave}`);
-  return { id:key, keySignature:key, vexKeys, noteObjs:[...up, ...down] };
-}
-
-export function letterFreq(letter, octave, key, a4=442){
-  const sig = KEY_SIG[key] || KEY_SIG["C"];
-  let semi = NAT[letter];
-  if(Array.isArray(sig.sharps) && sig.sharps.includes(letter)) semi += 1;
-  if(Array.isArray(sig.flats)  && sig.flats.includes(letter))  semi -= 1;
-  const n = (octave-4)*12 + (semi-9); // A4=442
+export function letterFreqWithAcc({letter,acc,octave}, a4=A4){
+  let semi = NAT[letter] + (acc==="#"?1:(acc==="b"?-1:0));
+  const n = (octave-4)*12 + (semi - 9); // A4 index = 9
   return a4 * Math.pow(2, n/12);
+}
+
+export function toVexKeyFromObj(o){ return `${o.letter.toLowerCase()}${o.acc||""}/${o.octave}`; }
+export function toVexKeys(noteObjs){ return noteObjs.map(toVexKeyFromObj); }
+
+function dataset(scaleType, level){
+  const isMaj = scaleType==="major", isAdv = level==="advanced";
+  return isMaj ? (isAdv?MAJOR_ADVANCED:MAJOR_INTERMEDIATE)
+               : (isAdv?NATMIN_ADVANCED:NATMIN_INTERMEDIATE);
+}
+
+export function getKeys(scaleType, level){ return Object.keys(dataset(scaleType,level)); }
+
+export function makeExerciseAll(scaleType, level, key){
+  const arr = dataset(scaleType,level)[key];
+  if(!arr) throw new Error(`未知のキー: ${key} (${scaleType}/${level})`);
+  return arr.map(parseNote); // そのまま並べる（生成済みの実音列）
 }
