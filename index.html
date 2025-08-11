@@ -3,14 +3,15 @@
 <html lang="ja">
 <head>
   <meta charset="utf-8" />
-  <title>Violin Scale Trainer</title>
+  <title>Violin Scale Trainer 🐙</title>
   <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover" />
   <link rel="stylesheet" href="./style.css" />
-  <!-- VexFlow（ローカル → CDN。失敗時は自前SVGフォールバック） -->
+
+  <!-- VexFlow（ローカル→CDN。失敗時は自前SVG） -->
   <script defer src="./lib/vexflow-min.js"></script>
   <script>
     (function () {
-      const urls = [
+      const srcs = [
         "https://cdn.jsdelivr.net/npm/vexflow@3.0.9/build/vexflow-min.js",
         "https://unpkg.com/vexflow@3.0.9/build/vexflow-min.js",
         "https://cdn.jsdelivr.net/npm/vexflow@4.2.3/build/esm/standalone/vexflow-min.js",
@@ -18,23 +19,32 @@
       ];
       let i = 0;
       function tryLoad() {
-        if (window.Vex?.Flow || i >= urls.length) return;
+        if (window.Vex?.Flow || i >= srcs.length) return;
         const s = document.createElement("script");
-        s.src = urls[i++];
+        s.src = srcs[i++];
         s.defer = true;
         s.onload = tryLoad;
         s.onerror = tryLoad;
         document.head.appendChild(s);
       }
-      window.addEventListener("DOMContentLoaded", tryLoad);
+      window.addEventListener("DOMContentLoaded", tryLoad, { once: true });
     })();
+
+    // 許可ボタンの即時フック
+    window.__permitPending = false;
+    window.__permit = function () {
+      window.__permitPending = true;
+      window.dispatchEvent(new Event("app-permit"));
+      const g = document.getElementById("gate");
+      if (g) { g.classList.remove("show"); g.setAttribute("aria-hidden","true"); }
+    };
   </script>
 </head>
 <body>
-  <!-- ヘッダー：スケール/レベル/キー/難易度/A4/開始停止/dB -->
+  <!-- ヘッダー -->
   <header id="topbar">
     <div class="left">
-      <span class="brand">Violin Scale Trainer</span>
+      <span class="brand">Violin Scale Trainer 🐙</span>
 
       <div class="seg" role="tablist" aria-label="スケール">
         <input type="radio" id="tab-major" name="scaleType" value="major" checked>
@@ -44,18 +54,18 @@
       </div>
 
       <div class="seg" role="tablist" aria-label="レベル">
-        <input type="radio" id="tab-intermediate" name="level" value="intermediate">
+        <input type="radio" id="tab-intermediate" name="level" value="intermediate" checked>
         <label for="tab-intermediate">中級</label>
-        <input type="radio" id="tab-advanced" name="level" value="advanced" checked>
+        <input type="radio" id="tab-advanced" name="level" value="advanced">
         <label for="tab-advanced">上級</label>
       </div>
 
       <label class="key-inline">調:
-        <select id="key-select"></select>
+        <select id="key-select" aria-label="キー選択"></select>
       </label>
 
-      <label class="diff-inline">難易度
-        <select id="difficulty">
+      <label class="diff-inline">難易度:
+        <select id="difficulty" aria-label="難易度">
           <option value="s-easy">超かんたん (±9c)</option>
           <option value="easy">かんたん (±7c)</option>
           <option value="normal" selected>ふつう (±5c)</option>
@@ -68,19 +78,22 @@
     <div class="right">
       <button id="start">開始</button>
       <button id="stop" disabled>停止</button>
+      <button id="game" aria-pressed="false" title="🎮 ランダム20問">🎮</button>
       <button id="show-errors">ログ</button>
       <span class="a4">A<sub>4</sub>=442Hz</span>
       <span id="db-indicator" class="db">— dB</span>
-      <span id="app-version" class="version">v1.8.0</span>
+      <span id="app-version" class="version">v2.1.0</span>
     </div>
   </header>
 
   <main>
-    <!-- HUD：スコア／バー／針 -->
+    <!-- HUD -->
     <section id="hud">
       <div id="score-panel">
         <div id="big-score" aria-live="polite">—</div>
         <div id="advice" aria-live="polite">待機中…</div>
+
+        <div id="time-box"><span id="mode-name">音階</span><span id="timer">00:00.000</span></div>
 
         <div id="bar-wrap">
           <div id="cents-scale"><span>-50</span><span>-25</span><span>0</span><span>+25</span><span>+50</span></div>
@@ -91,57 +104,42 @@
           </div>
         </div>
       </div>
-
-      <div id="analog">
-        <svg id="analog-svg" viewBox="-66 0 132 76" aria-hidden="true">
-          <path d="M -60 60 A 60 60 0 0 1 60 60" class="bezel" fill="none"/>
-          <g class="ticks" id="tickset"></g>
-          <g id="hand" transform="translate(0,60)">
-            <line x1="0" y1="0" x2="0" y2="-46" class="hand"/>
-            <circle cx="0" cy="0" r="3" class="cap"/>
-          </g>
-          <text x="0" y="72" class="label">±50c</text>
-        </svg>
-      </div>
     </section>
 
-    <!-- 譜面（2小節＝16音）。火花Canvasは背面合成 -->
+    <!-- 譜面 -->
     <section id="score-area">
       <div class="score-head">
-        <div class="left">
-          <span id="prog" aria-live="polite">音 1/—</span>
-        </div>
-        <div class="right">
-          <span id="page-label">小節 1–2 / 全 — 小節</span>
-        </div>
+        <div class="left"><span id="prog" aria-live="polite">音 1/—</span></div>
+        <div class="right"><span id="page-label">小節 1–2 / 全 — 小節</span></div>
       </div>
       <div id="staff-wrap">
         <canvas id="spark"></canvas>
         <div id="staff"></div>
+        <div id="credit">@takotsubo12345</div>
       </div>
     </section>
   </main>
 
-  <!-- マイク許可ゲート -->
-  <div id="gate" class="modal show" aria-hidden="false">
+  <!-- 許可ゲート -->
+  <div id="gate" class="modal" aria-hidden="true">
     <div class="card">
       <h2>マイクの使用許可</h2>
       <p>許可後は自動で開始します。ホームや他画面に移動すると<strong>即時停止</strong>します。</p>
-      <button id="permit" onclick="window.__permit && window.__permit()">許可</button>
+      <button id="permit" onclick="window.__permit()">許可</button>
     </div>
   </div>
 
-  <!-- 完了ダイアログ -->
+  <!-- 完了 -->
   <div id="result" class="modal" aria-hidden="true">
     <div class="card">
-      <div class="label">音階 完了</div>
+      <div class="label" id="result-title">完了</div>
       <div id="praise">Great!</div>
       <div id="details"></div>
       <div class="buttons"><button id="again">もう一度</button><button id="close">閉じる</button></div>
     </div>
   </div>
 
-  <!-- エラー一覧 -->
+  <!-- エラー -->
   <div id="error-modal" class="modal" aria-hidden="true">
     <div class="card">
       <h2>エラー情報</h2>
@@ -150,10 +148,11 @@
     </div>
   </div>
 
+  <!-- 画面フラッシュ -->
   <div id="hud-flash"></div>
   <div id="toast" aria-live="polite" aria-atomic="true"></div>
 
-  <!-- スリープ抑止（ユーザー操作後に再生） -->
+  <!-- スリープ抑止 -->
   <video id="nosleep" muted playsinline loop style="position:absolute;width:1px;height:1px;opacity:0;pointer-events:none">
     <source src="data:video/mp4;base64,AAAAHGZ0eXBpc28yAAAAAGlzbzJpc28yYXZjMQAA" type="video/mp4" />
   </video>
@@ -163,11 +162,16 @@
   <script type="module" src="./app.js"></script>
 
   <script>
-    // 「許可」ボタンは pointerup/touchend/click どれでも進む
+    // 「開始」→ ゲート表示（iOSで確実にユーザ操作直後にgetUserMediaを呼ぶため）
     document.addEventListener('DOMContentLoaded',()=>{
-      const b=document.getElementById('permit'); if(!b) return;
-      const h=()=>window.__permit && window.__permit();
-      ['pointerup','touchend','click'].forEach(ev=>b.addEventListener(ev,h,{once:true}));
+      const startBtn = document.getElementById('start');
+      const gate = document.getElementById('gate');
+      const permitBtn = document.getElementById('permit');
+      const showGate = () => { gate.classList.add('show'); gate.setAttribute('aria-hidden','false'); };
+      startBtn.addEventListener('pointerup', showGate);
+      startBtn.addEventListener('touchend', showGate);
+      startBtn.addEventListener('click', showGate);
+      ['pointerup','touchend','click'].forEach(ev=>permitBtn.addEventListener(ev,()=>window.__permit()));
     });
   </script>
 </body>

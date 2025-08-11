@@ -1,6 +1,8 @@
 // app.js
-// バックグラウンド即停止、開始/停止をヘッダーへ。RMS閾値は固定。
-// 合格エフェクト：粒子大量・長寿命。色は |c| により緑/青/赤。
+// 🎮モード：C6以下・連続同音禁止・20問。トグルでON/OFF（背景紫）。
+// バックグラウンド/離脱/停止でマイク完全停止。爆発は派手＋0.5sフラッシュ。±0cで🐙大量。
+// 開始ボタン→必ず許可ゲート表示。停止→完全停止＋課題初期化。
+// 同名異オクターブは不合格（オクターブ誤認も防止）。
 
 import { A4, getKeys, makeExerciseAll, letterFreqWithAcc } from "./scales.js";
 import { renderTwoBars } from "./score.js";
@@ -15,12 +17,22 @@ function pushErr(msg){ const line = `${new Date().toISOString()} : ${msg}`; if(!
 function showToast(msg,type="info",tiny=false){
   const t=$("#toast"); if(!t) return;
   t.textContent = msg; t.className = tiny?`show tiny ${type}`:`show ${type}`;
-  setTimeout(()=>{ t.classList.remove("show","tiny","info","warn","error"); }, 1800);
+  setTimeout(()=>{ t.classList.remove("show","tiny","info","warn","error"); }, 2000);
 }
-function hudFlash(intensity=1){
-  const el=$("#hud-flash"); el.classList.add("show");
-  el.style.opacity = String(Math.min(0.28, 0.10 + 0.18*intensity));
-  setTimeout(()=>el.classList.remove("show"), 180);
+
+// 0.5秒で必ず戻すフラッシュ
+let flashTimer=0;
+function hudFlash(color="rgba(34,197,94,.45)", intensity=1){
+  const el=$("#hud-flash");
+  el.style.background = color;
+  el.style.opacity = String(Math.min(0.55, 0.25 + 0.30*intensity));
+  el.classList.add("show");
+  clearTimeout(flashTimer);
+  flashTimer = setTimeout(()=>{
+    el.classList.remove("show");
+    el.style.background = "transparent";
+    el.style.opacity = "0";
+  }, 500); // 0.5秒固定
 }
 
 // DOM
@@ -32,22 +44,24 @@ const ui = {
   db: $("#db-indicator"),
   ver: $("#app-version"),
 
-  start: $("#start"), stop: $("#stop"), log: $("#show-errors"),
+  start: $("#start"), stop: $("#stop"), log: $("#show-errors"), game: $("#game"),
 
   bigScore: $("#big-score"), advice: $("#advice"),
   bar: $("#cents-bar"), barNeedle: $("#bar-needle"),
-  analogHand: $("#hand"),
 
   staffWrap: $("#staff-wrap"), spark: $("#spark"),
   prog: $("#prog"), pageLabel: $("#page-label"),
 
-  gate: $("#gate"), permit: $("#permit"),
+  gate: $("#gate"),
   result: $("#result"), praise: $("#praise"), details: $("#details"),
   again: $("#again"), close: $("#close"),
+  resultTitle: $("#result-title"),
 
   errModal: $("#error-modal"), errList: $("#error-list"),
   errCopy: $("#err-copy"), errClose: $("#err-close"),
   noSleep: $("#nosleep"),
+
+  modeName: $("#mode-name"), timer: $("#timer"),
 };
 
 // 状態
@@ -55,14 +69,16 @@ const difficultyToCents = { "s-easy":9, easy:7, normal:5, hard:3, oni:2 };
 let state = {
   visible: document.visibilityState === "visible",
   running: false,
+  mode: "scale", // "scale" | "arcade"
   stream: null,
   ac: null,
   analyser: null,
+  source: null,
+  hpf: null, peak: null,
   buf: null,
   lastT: 0,
-  servo: { pos:0, vel:0 },
   scaleType: "major",
-  level: "advanced",
+  level: "intermediate",
   key: null,
   notes: [],
   total: 0,
@@ -71,23 +87,31 @@ let state = {
   idx: 0,
   lockUntil: 0,
   passRecorded: [],
-  failed: new Set(),
   rmsThresh: 0.0015, // 固定
   diffCents: difficultyToCents[$("#difficulty").value],
   rafId: 0,
+  startClock: 0,
+  endClock: 0,
 };
 
-// バックグラウンド/ページ離脱で即停止（iOS Safari対策に多重フック）
+// ===== 可視・離脱監視（Safari対策で徹底停止） =====
+function stopAllTracks(){
+  try{ state.stream?.getTracks?.().forEach(t=>{ try{ t.stop(); }catch{} }); }catch{}
+}
+function closeAudio(){
+  try{ state.ac?.suspend?.(); }catch{}
+  try{ state.ac?.close?.(); }catch{}
+}
 ["visibilitychange","webkitvisibilitychange","pagehide","freeze","blur","beforeunload"].forEach(ev=>{
   window.addEventListener(ev, ()=>{
     state.visible = document.visibilityState === "visible";
     if(!state.visible || ev==="pagehide" || ev==="beforeunload" || ev==="freeze" || ev==="blur"){
-      hardStop("非可視または離脱で停止");
+      hardStop("非可視/離脱で停止");
     }
   }, {passive:true,capture:true});
 });
 
-// 「特定の画面以外では動かない」…譜面が画面外なら停止
+// 譜面見えなくなったら停止
 const screenObserver = new IntersectionObserver((entries)=>{
   entries.forEach(e=>{
     if(state.running && !e.isIntersecting) hardStop("譜面が非表示で停止");
@@ -95,23 +119,67 @@ const screenObserver = new IntersectionObserver((entries)=>{
 },{ threshold:0.15 });
 screenObserver.observe(ui.staffWrap);
 
-// スケール選択
+// スケールUI
 function populateKeys(){
   const st = state.scaleType, lv = state.level;
   const keys = getKeys(st, lv);
   ui.keySel.innerHTML = keys.map(k=>`<option value="${k}">${k}</option>`).join("");
+  // 以前の選択がなければ先頭を採用
   if(!state.key || !keys.includes(state.key)) state.key = keys[0];
   ui.keySel.value = state.key;
 }
+function onScaleParamChange(){
+  const st = [...ui.scaleType].find(i=>i.checked)?.value || "major";
+  const lv = [...ui.level].find(i=>i.checked)?.value || "intermediate";
+  state.scaleType = st; state.level = lv;
+  populateKeys(); // キー一覧を正しく入れ替え
+  state.key = ui.keySel.value;
+  loadExercise(); // 即座に譜面反映
+  gateBack();     // マイクは再許可から
+}
+ui.keySel.addEventListener("change", ()=>{ state.key = ui.keySel.value; loadExercise(); gateBack(); });
+ui.scaleType.forEach(r=>r.addEventListener("change", onScaleParamChange));
+ui.level.forEach(r=>r.addEventListener("change", onScaleParamChange));
+ui.diffSel.addEventListener("change", ()=>{ state.diffCents = difficultyToCents[ui.diffSel.value]; });
+
+// アーケード（20問、C6以下・連続同音禁止）
+function makeArcadeSet(){
+  const C6 =  letterFreqWithAcc({letter:"C",acc:"",octave:6}, A4);
+  const G3 =  letterFreqWithAcc({letter:"G",acc:"",octave:3}, A4);
+  const all = makeExerciseAll(state.scaleType, state.level, state.key).filter(n=>{
+    const f = letterFreqWithAcc(n, A4);
+    return f>=G3 && f<=C6;
+  });
+  const pick=()=>all[(Math.random()*all.length)|0];
+  const out=[];
+  let prev="";
+  for(let i=0;i<20;i++){
+    let p=pick(), sig=`${p.letter}${p.acc}${p.octave}`;
+    let failsafe=0;
+    while(sig===prev && failsafe++<32){ p=pick(); sig=`${p.letter}${p.acc}${p.octave}`; }
+    out.push(p); prev=sig;
+  }
+  return out;
+}
 
 function loadExercise(){
-  state.notes = makeExerciseAll(state.scaleType, state.level, state.key);
+  if(state.mode==="arcade"){ state.notes = makeArcadeSet(); }
+  else { state.notes = makeExerciseAll(state.scaleType, state.level, state.key); }
   state.total = state.notes.length;
   state.totalBars = Math.ceil(state.total/8);
   state.offset = 0; state.idx = 0;
   state.passRecorded = Array(state.total).fill(null);
-  state.failed.clear();
+  ui.prog.textContent = `音 1/${state.total}`;
   renderPage(); updateProgressUI();
+  ui.modeName.textContent = state.mode==="arcade" ? "🎮 20問" : "音階";
+  resetClock();
+}
+function resetClock(){
+  state.startClock=0; state.endClock=0; ui.timer.textContent = "00:00.000";
+}
+function fmtTime(ms){
+  const m = Math.floor(ms/60000), s = Math.floor((ms%60000)/1000), x = Math.floor(ms%1000);
+  return `${String(m).padStart(2,"0")}:${String(s).padStart(2,"0")}.${String(x).padStart(3,"0")}`;
 }
 
 let pageAPI = null;
@@ -131,31 +199,39 @@ function highlightCurrentNote(){
   for(let i=0;i<16;i++) pageAPI.recolor(i, i===rel ? "note-target" : "note-normal");
 }
 
-// UIイベント
-ui.scaleType.forEach(r=>r.addEventListener("change", e=>{
-  if(e.target.checked){ state.scaleType = e.target.value; populateKeys(); loadExercise(); }
-}));
-ui.level.forEach(r=>r.addEventListener("change", e=>{
-  if(e.target.checked){ state.level = e.target.value; populateKeys(); loadExercise(); }
-}));
-ui.keySel.addEventListener("change", e=>{ state.key = e.target.value; loadExercise(); });
-ui.diffSel.addEventListener("change", e=>{ state.diffCents = difficultyToCents[e.target.value]; });
-
-populateKeys(); loadExercise();
-
-// 許可ゲート
-window.__permit = async function(){
-  ui.gate.classList.remove("show"); ui.gate.setAttribute("aria-hidden","true");
+// 許可イベント
+function gateBack(){ ui.gate.classList.add("show"); ui.gate.setAttribute("aria-hidden","false"); }
+window.addEventListener("app-permit", async ()=>{
   try { await start(); } catch(err){ pushErr(err.message||String(err)); showToast("開始に失敗しました","error"); gateBack(); }
-};
-function gateBack(){
-  ui.gate.classList.add("show"); ui.gate.setAttribute("aria-hidden","false");
-}
+});
+if (window.__permitPending) setTimeout(()=>window.dispatchEvent(new Event("app-permit")), 0);
 
 // ボタン
-ui.start.addEventListener("click", ()=> window.__permit && window.__permit());
-ui.stop.addEventListener("click", ()=> hardStop("停止ボタン"));
-
+ui.start.addEventListener("click", ()=> { /* ゲートはindex.html側で表示 */ });
+ui.stop.addEventListener("click", ()=>{
+  hardStop("停止ボタン");
+  // 課題を初期化（現在の設定で再生成）
+  loadExercise();
+});
+ui.game.addEventListener("click", ()=>{
+  const pressed = ui.game.getAttribute("aria-pressed")==="true";
+  if(pressed){
+    // OFF → 通常
+    ui.game.setAttribute("aria-pressed","false");
+    document.body.classList.remove("arcade");
+    state.mode = "scale";
+    loadExercise();
+    showToast("🎼 通常スケール", "info", true);
+  }else{
+    // ON → アーケード
+    ui.game.setAttribute("aria-pressed","true");
+    document.body.classList.add("arcade");
+    state.mode = "arcade";
+    loadExercise();
+    showToast("🎮 ランダム20問（C6まで, 連続同音なし）", "info", true);
+  }
+  gateBack();
+});
 ui.log.addEventListener("click", ()=>{
   ui.errList.innerHTML = [...errors].map(s=>`<li><code>${s}</code></li>`).join("") || "<li>なし</li>";
   $("#error-modal").classList.add("show"); $("#error-modal").setAttribute("aria-hidden","false");
@@ -163,17 +239,22 @@ ui.log.addEventListener("click", ()=>{
 ui.errCopy.addEventListener("click", async ()=>{ await navigator.clipboard.writeText([...errors].join("\n")); showToast("コピーしました"); });
 ui.errClose.addEventListener("click", ()=>{ $("#error-modal").classList.remove("show"); $("#error-modal").setAttribute("aria-hidden","true"); });
 
-// 完了ダイアログ
-$("#again").addEventListener("click", ()=>{ $("#result").classList.remove("show"); $("#result").setAttribute("aria-hidden","true"); loadExercise(); gateBack(); });
+// 完了
+$("#again").addEventListener("click", ()=>{
+  $("#result").classList.remove("show"); $("#result").setAttribute("aria-hidden","true");
+  loadExercise(); gateBack();
+});
 $("#close").addEventListener("click", ()=>{ $("#result").classList.remove("show"); $("#result").setAttribute("aria-hidden","true"); gateBack(); });
 
-// 音声セットアップ
+// 音声開始
 async function start(){
   if(!state.visible){ showToast("画面が見えていません","warn"); gateBack(); return; }
   if(state.running) return;
 
   ui.noSleep.play().catch(()=>{});
   const ac = new (window.AudioContext||window.webkitAudioContext)({ latencyHint: "interactive" });
+
+  // 許可ダイアログはこのタイミングで出る（ユーザ操作直後に発火済み）
   const stream = await navigator.mediaDevices.getUserMedia({
     audio: { channelCount: 1, sampleRate: ac.sampleRate, echoCancellation:false, noiseSuppression:false, autoGainControl:false }
   });
@@ -186,27 +267,32 @@ async function start(){
   src.connect(hpf); hpf.connect(peak); peak.connect(analyser);
 
   state.ac = ac; state.stream = stream; state.analyser = analyser;
+  state.source = src; state.hpf = hpf; state.peak = peak;
   state.buf = new Float32Array(analyser.fftSize);
   state.running = true; document.body.classList.add("running");
   ui.start.disabled = true; ui.stop.disabled = false;
+  // ゲートは閉じる
+  ui.gate.classList.remove("show"); ui.gate.setAttribute("aria-hidden","true");
   loop();
 }
 
 function hardStop(reason=""){
   try{ cancelAnimationFrame(state.rafId); }catch{}
-  try{ state.ac?.suspend?.(); }catch{}
-  try{ state.ac?.close?.(); }catch(e){ pushErr("AudioContext close失敗: "+(e.message||e)); }
-  try{ state.stream?.getTracks?.().forEach(t=>t.stop()); }catch(e){ pushErr("MediaStream停止失敗: "+(e.message||e)); }
+  try{ state.source?.disconnect(); state.hpf?.disconnect(); state.peak?.disconnect(); }catch{}
+  stopAllTracks();
+  closeAudio();
   state.stream = null; state.ac=null; state.analyser=null; state.buf=null;
+  state.source=null; state.hpf=null; state.peak=null;
   state.running=false; document.body.classList.remove("running");
   ui.start.disabled = false; ui.stop.disabled = true;
+  // 念のため遅延でもう一度停止（iOS Safariガード）
+  setTimeout(()=>{ stopAllTracks(); closeAudio(); }, 800);
   if(reason) pushErr(reason);
-  // 監視タイマ（Safari取りこぼし補完）
-  setTimeout(()=>{ try{ state.stream?.getTracks?.().forEach(t=>t.stop()); }catch{} }, 900);
+  // 再開はゲートから
   gateBack();
 }
 
-// F0推定：自己相関＋放物線補間
+// F0推定（自己相関＋放物線）
 const fMin=110, fMax=2200;
 function hamming(i,N){ return 0.54 - 0.46 * Math.cos(2*Math.PI*i/(N-1)); }
 function autoCorrelate(buf,sr){
@@ -231,19 +317,7 @@ function autoCorrelate(buf,sr){
   function acf(ofs){ let sum=0; for(let i=0;i<N-ofs;i++) sum+=buf[i]*buf[i+ofs]; return sum; }
 }
 
-// 針サーボ
-const servo = { wn:11.5, z:0.78 };
-function updateNeedle(cents, dt){
-  const e = clamp(cents, -50, 50);
-  const dead = Math.abs(e)<=1 ? 0 : e;
-  const z = Math.min(0.95, servo.z + (Math.max(0,6-Math.abs(e))/6)*(0.95-servo.z));
-  const a = servo.wn*servo.wn*dead - 2*z*servo.wn*state.servo.vel;
-  state.servo.vel += a*dt; state.servo.pos += state.servo.vel*dt;
-  const angle = clamp(state.servo.pos*(60/50), -60, 60);
-  ui.analogHand.setAttribute("transform", `translate(0,60) rotate(${angle})`);
-}
-
-// 採点・進行
+// バー更新
 function nearestSemitoneCents(freq){
   if(freq<=0) return 0;
   const n = Math.round(12*Math.log2(freq/A4));
@@ -256,21 +330,35 @@ function updateDB(db){
   el.textContent = `${db} dB`;
   el.style.background = db>=80?"#3b0e0e": db>=70?"#3b2a0e": db>=40?"#0e2f1f":"#0d1117";
 }
-function badgeFor(score){ return score>=95?"◎":(score>=90?"◯":"×"); }
 function setAdvice(c){
   const abs=Math.abs(c); const a=ui.advice;
   if(abs>50){ a.className="bad"; a.textContent="頑張ろう！"; }
   else if(abs>15){ a.className="warn"; a.textContent=`${Math.round(abs)}c ${c>0?"高い":"低い"}`; }
   else { a.className="good"; a.textContent="いい感じ！"; }
 }
+
+// オクターブ誤り検出（同名でも別オクターブは不合格）
+function isWrongOctave(freq, fRef, passBand){
+  if(freq<=0||fRef<=0) return false;
+  const k = Math.round(Math.log2(freq / fRef)); // 0: 同オクターブ
+  if(k===0) return false;
+  const fAlt = fRef * Math.pow(2, k);
+  const cents = 1200*Math.log2(freq / fAlt);
+  return Math.abs(cents) <= passBand; // 近くてもオクターブ違い
+}
+
 function goNextNote(){
   state.idx++;
   if(state.idx >= state.total){
+    state.endClock = performance.now();
     $("#result").classList.add("show"); $("#result").setAttribute("aria-hidden","false");
     const ok = state.passRecorded.filter(v=>typeof v==="number").length;
     const avg = Math.round(state.passRecorded.reduce((a,b)=>a+(b||0),0)/Math.max(1,ok));
+    const t = state.startClock? fmtTime(state.endClock - state.startClock) : "—";
+    ui.resultTitle.textContent = state.mode==="arcade" ? "🎮 ランダム20問 完了" : "音階 完了";
+    const modeStr = state.mode==="arcade" ? "モード: 🎮 ランダム20問" : "モード: 音階";
     ui.praise.textContent = ok===state.total ? "Perfect!! 🎉" : "Good job! ✅";
-    ui.details.textContent = `合格 ${ok}/${state.total} 音、平均 ${isFinite(avg)?avg:0} 点`;
+    ui.details.textContent = `${modeStr} / 合格 ${ok}/${state.total} 音、平均 ${isFinite(avg)?avg:0} 点、クリアタイム ${t}`;
     hardStop("完了"); return;
   }
   const rel = state.idx - state.offset;
@@ -278,7 +366,7 @@ function goNextNote(){
   highlightCurrentNote(); updateProgressUI();
 }
 
-// ============ 花火エンジン（長寿命・派手） ============
+// ============ 花火（派手・長寿命・±0cで🐙大量） ============
 const sparks = [];
 let sparkRunning = false;
 function ensureSparkLoop(){
@@ -293,43 +381,60 @@ function ensureSparkLoop(){
       const p = sparks[i];
       const life = (t - p.t0);
       if(life>p.life){ sparks.splice(i,1); continue; }
-      // 物理
-      p.vy += 0.010; p.x += p.vx; p.y += p.vy; p.size *= 0.995; p.alpha *= 0.985;
-      // 描画
+      p.vy += 0.010; p.x += p.vx; p.y += p.vy;
+      p.size *= 0.996; p.alpha *= 0.985;
       ctx.globalCompositeOperation = "lighter";
-      ctx.globalAlpha = Math.max(0, p.alpha);
-      ctx.fillStyle = p.color;
-      ctx.beginPath(); ctx.arc(p.x, p.y, Math.max(0.6,p.size), 0, Math.PI*2); ctx.fill();
+      if(p.type==="emoji"){
+        ctx.globalAlpha = Math.max(0, p.alpha);
+        ctx.font = `${p.size*6}px system-ui,Apple Color Emoji,Segoe UI Emoji`;
+        ctx.fillText("🐙", p.x, p.y);
+      }else{
+        ctx.globalAlpha = Math.max(0, p.alpha);
+        ctx.fillStyle = p.color;
+        ctx.beginPath(); ctx.arc(p.x, p.y, Math.max(0.6,p.size), 0, Math.PI*2); ctx.fill();
+      }
     }
     if(sparks.length===0){ sparkRunning=false; return; }
     requestAnimationFrame(loop);
   }
   requestAnimationFrame(loop);
 }
-function addBurst(x,y,{count=120, life=900, color="hsl(140,100%,65%)"}={}){
+function addBurst(x,y,{count=460, life=2100, color="hsl(140,100%,65%)", big=1.6}={}){
   const cvs = ui.spark;
+  const spread = 1 + big*0.9;
   for(let i=0;i<count;i++){
-    const sp = (Math.random()*2-1)*Math.PI; // 半球にしない：放射
-    const speed = 1 + Math.random()*3.6;
+    const ang = Math.random()*Math.PI*2;
+    const speed = spread*(1.2 + Math.random()*5.6);
     sparks.push({
-      x, y, vx:Math.cos(sp)*speed, vy:Math.sin(sp)*speed - 1.2,
-      size: 1.6 + Math.random()*2.2, alpha: 1.0,
-      t0: now(), life: life + Math.random()*400, color
+      type:"dot",
+      x, y, vx:Math.cos(ang)*speed, vy:Math.sin(ang)*speed - 1.5*big,
+      size: 2.0 + Math.random()*4.2*big, alpha: 1.0,
+      t0: now(), life: life + Math.random()*700, color
     });
   }
   ensureSparkLoop();
 }
-
-// 強さと色を |c| から決定
+function addOcto(x,y,many=false){
+  const n = many? 36 : 16;
+  for(let i=0;i<n;i++){
+    sparks.push({
+      type:"emoji", x: x + (Math.random()-0.5)*40, y: y+8,
+      vx:(Math.random()-0.5)*1.6, vy:-1.9 - Math.random()*1.0,
+      size: 5+Math.random()*3.2, alpha:1, t0:now(), life:2200+Math.random()*500
+    });
+  }
+  ensureSparkLoop();
+}
 function fireworkFor(score, centsAbs, xy){
-  const base = Math.round(24 * Math.exp((score-85)/6)); // 指数増加
-  const count = clamp(base, 16, 320);
-  let col;
-  if(centsAbs<=1) col="hsl(5,100%,65%)";        // ほぼ完璧→赤
-  else if(centsAbs<=3) col="hsl(210,100%,65%)"; // ±3内→青
-  else col="hsl(140,100%,65%)";                 // ギリギリ→緑
-  addBurst(xy.x, xy.y, {count, life: 1100, color: col});
-  hudFlash(score>=99?1: score>=95?0.8:0.55);
+  const base = Math.round(50 * Math.exp((score-85)/5.3)); // 強め
+  const count = clamp(base, 50, 820);
+  let col, flash;
+  if(centsAbs<=1){ col="hsl(5,100%,63%)"; flash="rgba(255,80,80,.50)"; }        // ±1 → 赤
+  else if(centsAbs<=3){ col="hsl(210,100%,65%)"; flash="rgba(110,170,255,.50)"; } // ±3 → 青
+  else { col="hsl(140,100%,62%)"; flash="rgba(90,230,170,.50)"; }                 // ギリ → 緑
+  addBurst(xy.x, xy.y, {count, life: 2200, color: col, big: (score>=98?1.9:1.4)});
+  hudFlash(flash, score>=99?1: score>=95?0.85:0.65);
+  if(centsAbs<=0.5){ addOcto(xy.x, xy.y-10, true); } // ほぼ±0cで🐙大量
 }
 
 // メインループ
@@ -338,24 +443,30 @@ function loop(){
   state.rafId = requestAnimationFrame(loop);
   const t = now(); const dt = (state.lastT? (t-state.lastT)/1000 : 0.016); state.lastT=t;
 
+  // 時計
+  if(state.startClock){ ui.timer.textContent = fmtTime(performance.now()-state.startClock); }
+
   state.analyser.getFloatTimeDomainData(state.buf);
   const res = autoCorrelate(state.buf, state.ac.sampleRate);
   const freq = res.freq||0;
 
-  // 針（近傍半音）
-  const needleC = nearestSemitoneCents(freq||A4);
-  updateNeedle(needleC, dt);
-
-  if(!res.alive){ ui.bigScore.textContent="—"; ui.advice.textContent="待機中…"; return; }
-
+  // バー：近傍半音（針は廃止）
+  const needleC = nearestSemitoneCents(freq||A4); // 参考
   // バー（ターゲット基準）
-  const fRef = targetFreq(); const cents = 1200*Math.log2((freq||fRef)/fRef);
+  const fRef = targetFreq();
+  const cents = 1200*Math.log2((freq||fRef)/fRef);
   const x = clamp((cents+50)/100, 0, 1); ui.barNeedle.style.left = `calc(${x*100}% - 1px)`;
   ui.bar.classList.toggle("hint-low", cents<-7); ui.bar.classList.toggle("hint-high", cents>7);
+
+  // dB低い時は静止
+  if(!res.alive){ ui.bigScore.textContent="—"; ui.advice.textContent="待機中…"; return; }
 
   const score = clamp(100 - Math.abs(cents)*2, 0, 100)|0;
   ui.bigScore.textContent = String(score);
   setAdvice(cents);
+
+  // タイマ開始（初回合格域）
+  if(!state.startClock && Math.abs(cents) <= state.diffCents){ state.startClock = performance.now(); }
 
   const rel = state.idx - state.offset; if(rel<0 || rel>15) return;
   if(performance.now() < state.lockUntil) return;
@@ -363,43 +474,42 @@ function loop(){
   const passBand = state.diffCents;
   const abs = Math.abs(cents);
 
+  // オクターブ誤りを強制的に不合格扱い
+  if(isWrongOctave(freq, fRef, passBand)){
+    // 見た目は失敗色（採点はしない）
+    pageAPI.recolor(rel, "note-failed");
+    return;
+  }
+
   if(abs <= passBand){
     if(state.passRecorded[state.idx]==null){
       state.passRecorded[state.idx] = score;
       const xy = pageAPI.getXY(rel);
-      pageAPI.badge(rel, score>=95?"◎": (score>=90?"◯":"×"));
       fireworkFor(score, abs, xy);
       if(rel===15){
-        state.lockUntil = performance.now() + 180;
+        state.lockUntil = performance.now() + 180; // ページ最後はすぐ次へ
         goNextNote(); return;
       }
       state.lockUntil = performance.now() + 200;
       goNextNote(); return;
     }
-  }else if(abs>50){
-    // 別の音：採点しない
   }
 }
 
-// 目盛を初期化
-(function buildTicks(){
-  const g=$("#tickset"); if(!g) return;
-  g.innerHTML="";
-  for(let c=-50;c<=50;c+=5){
-    const ang = (c/50)*60 * Math.PI/180;
-    const cx=0, cy=60, R=60;
-    const x1 = cx + Math.sin(ang)*R;
-    const y1 = cy - Math.cos(ang)*R;
-    const len = (c%25===0?10:(c%10===0?7:5));
-    const x2 = cx + Math.sin(ang)*(R-len);
-    const y2 = cy - Math.cos(ang)*(R-len);
-    const l=document.createElementNS("http://www.w3.org/2000/svg","line");
-    l.setAttribute("x1",x1); l.setAttribute("y1",y1);
-    l.setAttribute("x2",x2); l.setAttribute("y2",y2);
-    l.setAttribute("class","tick"+(c%25===0?" major":""));
-    g.appendChild(l);
-  }
-})();
-
 // バージョン
-ui.ver.textContent = "v1.8.0";
+ui.ver.textContent = "v2.1.0";
+
+// 初期ロード
+function populateAndLoad(){
+  // デフォルト：長調/中級
+  state.scaleType="major"; state.level="intermediate";
+  populateKeys(); loadExercise();
+}
+populateAndLoad();
+
+// ゲート復帰のクリック補助（iOS端末）
+document.addEventListener('DOMContentLoaded',()=>{
+  const p=document.getElementById('permit'); if(!p) return;
+  const h=()=>window.__permit();
+  ['pointerup','touchend','click'].forEach(ev=>p.addEventListener(ev,h));
+});

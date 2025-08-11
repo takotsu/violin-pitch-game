@@ -1,20 +1,21 @@
 // score.js
-// 2小節=16音でページング表示。VexFlow優先／自前SVGフォールバック。
-
+// 2小節=16音ページング。VexFlow優先／自前SVGフォールバック。バッジ機能は廃止。
 import { toVexKeys } from "./scales.js";
 
 const staffDiv = document.getElementById("staff");
 let cache = null;
 
 function mkSvg(w,h){ const ns="http://www.w3.org/2000/svg"; const s=document.createElementNS(ns,"svg"); s.setAttribute("viewBox",`0 0 ${w} ${h}`); s.setAttribute("width","100%"); s.setAttribute("height","100%"); return s; }
-function line(svg,x1,y1,x2,y2,stroke="#e8eef7",w=1){ const ns="http://www.w3.org/2000/svg"; const l=document.createElementNS(ns,"line"); l.setAttribute("x1",x1); l.setAttribute("y1",y1); l.setAttribute("x2",x2); l.setAttribute("y2",y2); l.setAttribute("stroke",stroke); l.setAttribute("stroke-width",w); svg.appendChild(l); return l; }
+function line(svg,x1,y1,x2,y2,stroke="#e8eef7",w=1){ const ns="http://www.w3.org/2000/svg"; const l=document.createElementNS(ns,"line");
+  l.setAttribute("x1",x1); l.setAttribute("y1",y1); l.setAttribute("x2",x2); l.setAttribute("y2",y2);
+  l.setAttribute("stroke",stroke); l.setAttribute("stroke-width",w); svg.appendChild(l); return l; }
 function text(svg,x,y,str,size=12,weight="700",anchor="middle",fill="#a7c7dd"){
   const ns="http://www.w3.org/2000/svg"; const t=document.createElementNS(ns,"text");
   t.setAttribute("x",x); t.setAttribute("y",y); t.setAttribute("fill",fill);
   t.setAttribute("font-size",size); t.setAttribute("font-weight",weight); t.setAttribute("text-anchor",anchor);
   t.setAttribute("font-family",'system-ui,"Noto Music","Bravura","Petaluma",sans-serif'); t.textContent=str; svg.appendChild(t); return t;
 }
-function notehead(svg,x,y,cls="note-normal",rX=5.6,rY=4,rot=-20){
+function notehead(svg,x,y,cls="note-normal",rX=6.2,rY=4.2,rot=-20){
   const ns="http://www.w3.org/2000/svg"; const e=document.createElementNS(ns,"ellipse");
   e.setAttribute("cx",x); e.setAttribute("cy",y); e.setAttribute("rx",rX); e.setAttribute("ry",rY);
   e.setAttribute("transform",`rotate(${rot},${x},${y})`); e.setAttribute("class",cls); svg.appendChild(e); return e;
@@ -42,7 +43,7 @@ function renderFallback({ key, notes16 }){
   const w=staffDiv.clientWidth||780, h=staffDiv.clientHeight||300;
   let top=62, space=15, left=14, right=w-14;
 
-  // 高音見切れ防止：最上位音の余白を確保
+  // 高音見切れ防止
   const yTrial=(L,O,top0)=>{ const idx=(l)=>["C","D","E","F","G","A","B"].indexOf(l); const s=(O-4)*7+(idx(L)-idx("E")); return (top0+space*4)-(s*space/2); };
   let minY=1e9; for(const n of notes16){ const y=yTrial(n.letter,n.octave,top); if(y<minY) minY=y; }
   if(minY<22){ top += 22-minY; }
@@ -65,8 +66,8 @@ function renderFallback({ key, notes16 }){
     if((i+1)%8===0 && i<16) line(svg, innerLeft+stepX*(i+1), top, innerLeft+stepX*(i+1), bottom2, "#7aa2c1",1.1);
     nodes.push(head);
     const pos = (bottom2 - y)/(space/2);
-    if(pos<-2){ for(let k=-2;k>=pos; k-=2){ line(svg, x-9, bottom2 + (Math.abs(k)/2-1)*space, x+9, bottom2 + (Math.abs(k)/2-1)*space, "#e8eef7",1.05); } }
-    else if(pos>10){ for(let k=10;k<=pos; k+=2){ line(svg, x-9, top - ((k-10)/2+1)*space, x+9, top - ((k-10)/2+1)*space, "#e8eef7",1.05); } }
+    if(pos<-2){ for(let k=-2;k>=pos; k-=2){ line(svg, x-10, bottom2 + (Math.abs(k)/2-1)*space, x+10, bottom2 + (Math.abs(k)/2-1)*space, "#e8eef7",1.05); } }
+    else if(pos>10){ for(let k=10;k<=pos; k+=2){ line(svg, x-10, top - ((k-10)/2+1)*space, x+10, top - ((k-10)/2+1)*space, "#e8eef7",1.05); } }
   });
 
   cache={ mode:"svg", svg, nodes };
@@ -81,7 +82,7 @@ function renderVex({ key, vexKeys16 }){
   const ctx = renderer.getContext();
 
   const stave = new VF.Stave(12,56,w-24);
-  stave.addKeySignature(key); // 調号のみ
+  stave.addKeySignature(key);
   stave.setContext(ctx).draw();
 
   const notes = vexKeys16.map(k=>new VF.StaveNote({keys:[k],duration:"8",clef:"treble"}));
@@ -109,22 +110,7 @@ function api(){
         const el = cache.nodes[i]; if(!el) return; el.setAttribute("class", cls);
       }
     },
-    badge(i, symbol){
-      const gId = "badge-layer";
-      let layer = staffDiv.querySelector(`#${gId}`);
-      if(!layer){ const svg = staffDiv.querySelector("svg"); layer = document.createElementNS("http://www.w3.org/2000/svg","g"); layer.setAttribute("id",gId); svg.appendChild(layer); }
-      if(cache.mode==="vex"){
-        const bb = cache.notes[i]?.getBoundingBox(); if(!bb) return;
-        const t=document.createElementNS("http://www.w3.org/2000/svg","text");
-        t.setAttribute("x",bb.getX()+bb.getW()+5); t.setAttribute("y",bb.getY()+6); t.setAttribute("fill","#ffd166");
-        t.setAttribute("font-size","12"); t.setAttribute("font-weight","800"); t.textContent=symbol; layer.appendChild(t);
-      }else{
-        const b = cache.nodes[i]?.getBBox(); if(!b) return;
-        const t=document.createElementNS("http://www.w3.org/2000/svg","text");
-        t.setAttribute("x",b.x+b.width+6); t.setAttribute("y",b.y+6); t.setAttribute("fill","#ffd166");
-        t.setAttribute("font-size","12"); t.setAttribute("font-weight","800"); t.textContent=symbol; layer.appendChild(t);
-      }
-    },
+    badge(){ /* 廃止 */ },
     getXY(i){
       if(cache.mode==="vex"){
         const bb = cache.notes[i]?.getBoundingBox(); if(!bb) return {x:0,y:0};
@@ -136,26 +122,6 @@ function api(){
     }
   };
 }
-
-/* 半円針の目盛（5c刻み、±50c→±60°） */
-(function buildTicks(){
-  const g=document.getElementById("tickset"); if(!g) return;
-  g.innerHTML="";
-  for(let c=-50;c<=50;c+=5){
-    const ang = (c/50)*60 * Math.PI/180;
-    const cx=0, cy=60, R=60;
-    const x1 = cx + Math.sin(ang)*R;
-    const y1 = cy - Math.cos(ang)*R;
-    const len = (c%25===0?10:(c%10===0?7:5));
-    const x2 = cx + Math.sin(ang)*(R-len);
-    const y2 = cy - Math.cos(ang)*(R-len);
-    const l=document.createElementNS("http://www.w3.org/2000/svg","line");
-    l.setAttribute("x1",x1); l.setAttribute("y1",y1);
-    l.setAttribute("x2",x2); l.setAttribute("y2",y2);
-    l.setAttribute("class","tick"+(c%25===0?" major":""));
-    g.appendChild(l);
-  }
-})();
 
 export function renderTwoBars({ key, notes, offset=0 }){
   const slice = notes.slice(offset, offset+16);
